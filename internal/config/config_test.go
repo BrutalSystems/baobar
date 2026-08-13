@@ -72,3 +72,44 @@ func TestLoadRejectsNonURLAddr(t *testing.T) {
 		t.Fatal("expected an error for an addr containing a quote")
 	}
 }
+
+func TestLoadAddrAllowlist(t *testing.T) {
+	tests := []struct {
+		name      string
+		addr      string
+		shouldErr bool
+	}{
+		// Accepted addresses
+		{"simple hostname", "https://bao.example.com", false},
+		{"localhost with port", "http://localhost:8200", false},
+		{"IPv6 literal with port", "https://[::1]:8200", false},
+		{"hostname with port and path", "https://bao.example.com:8200/prefix", false},
+
+		// Rejected: shell metacharacters
+		{"right angle bracket in host", "https://x.com>out", true},
+		{"parentheses in host", "https://x.com(sub)", true},
+		{"asterisk in host", "https://x.com*", true},
+		{"quote and semicolon", "https://x.com\"; rm -rf ~", true},
+
+		// Rejected: credentials
+		{"userinfo in URL", "https://user:pw@bao.example.com", true},
+
+		// Rejected: wrong scheme
+		{"ftp scheme", "ftp://bao.example.com", true},
+
+		// Rejected: query string
+		{"query string", "https://bao.example.com/p?a=b", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load("", env(map[string]string{"VAULT_ADDR": tt.addr}))
+			if tt.shouldErr && err == nil {
+				t.Errorf("addr %q should have been rejected", tt.addr)
+			}
+			if !tt.shouldErr && err != nil {
+				t.Errorf("addr %q should have been accepted: %v", tt.addr, err)
+			}
+		})
+	}
+}

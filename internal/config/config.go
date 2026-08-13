@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -26,6 +27,11 @@ const (
 var (
 	ErrNoAddr        = errors.New("no OpenBao address configured (set VAULT_ADDR or addr in config.toml)")
 	ErrRecheckTooLow = fmt.Errorf("recheck below the %s minimum", MinRecheck)
+
+	// Allowlists for URL components
+	dnsHostRe = regexp.MustCompile(`^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::[0-9]{1,5})?$`)
+	ipv6HostRe = regexp.MustCompile(`^\[[0-9A-Fa-f:.]+\](?::[0-9]{1,5})?$`)
+	pathRe = regexp.MustCompile(`^[A-Za-z0-9._~/-]*$`)
 )
 
 // Config holds settings only. File paths come from DefaultPaths and are passed
@@ -86,8 +92,8 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	return c, nil
 }
 
-// validateAddr keeps shell metacharacters out of the string that internal/login
-// interpolates into a terminal command.
+// validateAddr enforces a strict allowlist for URL components since internal/login
+// interpolates the address into a terminal command.
 func validateAddr(addr string) error {
 	u, err := url.Parse(addr)
 	if err != nil {
@@ -99,9 +105,26 @@ func validateAddr(addr string) error {
 	if u.Host == "" {
 		return fmt.Errorf("addr %q has no host", addr)
 	}
-	if strings.ContainsAny(addr, "\"'`$;&|\n\r ") {
-		return fmt.Errorf("addr %q contains characters that are unsafe to shell out with", addr)
+	if u.User != nil {
+		return fmt.Errorf("addr %q must not contain userinfo", addr)
 	}
+	if u.RawQuery != "" {
+		return fmt.Errorf("addr %q must not contain a query string", addr)
+	}
+	if u.Fragment != "" {
+		return fmt.Errorf("addr %q must not contain a fragment", addr)
+	}
+
+	// Validate host against allowlist (DNS name or IPv6 literal, each with optional port)
+	if !dnsHostRe.MatchString(u.Host) && !ipv6HostRe.MatchString(u.Host) {
+		return fmt.Errorf("addr %q host does not match allowlist", addr)
+	}
+
+	// Validate path against allowlist
+	if u.Path != "" && !pathRe.MatchString(u.Path) {
+		return fmt.Errorf("addr %q path contains disallowed characters", addr)
+	}
+
 	return nil
 }
 
