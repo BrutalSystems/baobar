@@ -30,6 +30,9 @@ func TestClassify(t *testing.T) {
 		// Expiry is absolute, so a known-expired token is out regardless of
 		// whether we can reach the server to confirm it.
 		{"unreachable and expired", -time.Second, false, true, StateSignedOut},
+		// Pins the <= boundary in the expiryKnown && remaining <= 0 check,
+		// catching off-by-one mutations to <.
+		{"unreachable and expiring exactly now", 0, false, true, StateSignedOut},
 
 		// Token file present, never successfully looked up, server down.
 		{"unreachable with no known expiry", 0, false, false, StateDegraded},
