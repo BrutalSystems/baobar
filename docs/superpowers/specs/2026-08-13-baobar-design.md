@@ -326,9 +326,13 @@ Not blockers for M1. Decide when the milestone that needs them arrives.
 3. **Renew vs re-login.** `POST /v1/auth/token/renew-self` could extend an expiring token
    in one click, if the token is renewable and within its max TTL. Attractive for the
    `Expiring` state; needs a check of what the `st/aws` policies actually permit.
-4. **Icon design.** A bao bun rendered as a template image so macOS dark/light mode works.
-   M1 ships four generated colored dots — required, not optional, because they are the only
-   state signal on Windows — but they look amateur and should be replaced by release.
+4. **Icon design.** RESOLVED for accessibility, still open for craft. M1 ships five
+   generated shapes — filled circle, diamond, ring, hollow square, triangle — so every
+   state is identifiable in greyscale rather than by hue alone, which matters because the
+   icon is the whole state signal on Windows and red/green is the worst possible pair for
+   colourblind users. A test compares silhouettes so this cannot regress. What remains is
+   craft, not accessibility: a bao bun rendered as a macOS template image so it adapts to
+   dark/light mode, keeping the per-state shape distinction.
 
 ---
 

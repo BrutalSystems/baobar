@@ -47,10 +47,16 @@ platforms have and have not been exercised.
 
 | State | Icon | Menu bar label | Meaning |
 |---|---|---|---|
-| Signed out | red circle | `login` | no usable token on disk, or the server rejected it |
-| Signed in | green circle | `<countdown>` | token valid, more than the warning window left |
-| Expiring | amber circle | `<countdown>` | inside the warning window (`BAOBAR_WARN`, default 30m); fires one desktop notification per threshold |
-| Degraded | grey circle | `~<countdown>` or `?` | server unreachable; counting down from the cached expiry rather than declaring you signed out |
+| Signed out | red **ring** (hollow) | `login` | no usable token on disk, or the server rejected it |
+| Signed in | green **filled circle** | `<countdown>` | token valid, more than the warning window left |
+| Expiring | amber **diamond** | `<countdown>` | inside the warning window (`BAOBAR_WARN`, default 30m); fires one desktop notification per threshold |
+| Degraded | grey **hollow square** | `~<countdown>` or `?` | server unreachable; counting down from the cached expiry rather than declaring you signed out |
+
+Every state has its own **shape**, not just its own colour. On Windows the icon is the
+entire state signal, and distinguishing signed-out from signed-in by red-versus-green alone
+would be unreadable for the ~8% of men with red/green colour blindness. A test decodes the
+icons and compares their silhouettes, so a change that reduces two states to a difference
+in hue fails the build.
 
 On Windows the menu bar carries no text (`SetTitle` is a no-op there — see
 [Platform notes](#platform-notes)), so the tooltip is the primary readout: it spells out
@@ -160,5 +166,9 @@ Full rationale, alternatives considered, and the M1 plan:
 [`docs/superpowers/specs/2026-08-13-baobar-design.md`](docs/superpowers/specs/2026-08-13-baobar-design.md)
 · [`docs/superpowers/plans/2026-08-13-baobar-m1-indicator.md`](docs/superpowers/plans/2026-08-13-baobar-m1-indicator.md)
 
-Not in M1, by design: in-app login (M2/M3), autostart, token renewal, real artwork,
+Not in M1, by design: in-app login (M2/M3), autostart, token renewal, refined artwork,
 goreleaser, a Homebrew cask, signing and notarization.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
