@@ -106,7 +106,7 @@ func (c OIDCConfig) authURL(ctx context.Context, redirectURI, clientNonce string
 
 	resp, err := c.client().Do(req)
 	if err != nil {
-		return "", fmt.Errorf("request auth URL: %w", err)
+		return "", fmt.Errorf("request auth URL: %w", sanitize(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -141,7 +141,7 @@ func (c OIDCConfig) exchange(ctx context.Context, state, code, clientNonce strin
 
 	resp, err := c.client().Do(req)
 	if err != nil {
-		return "", fmt.Errorf("exchange code: %w", err)
+		return "", fmt.Errorf("exchange code: %w", sanitize(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

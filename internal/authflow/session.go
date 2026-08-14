@@ -12,6 +12,7 @@ import (
 	"html"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,6 +42,18 @@ func nonce() (string, error) {
 		return "", fmt.Errorf("generate nonce: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// sanitize strips the request URL out of a transport error. Go's *url.Error
+// embeds the full URL in Error(), and our request URLs carry an
+// authorization code, a client_nonce, and a username — none of which may
+// appear in an error string. The underlying cause is preserved.
+func sanitize(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Err
+	}
+	return err
 }
 
 type outcome struct {

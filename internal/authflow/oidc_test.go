@@ -7,13 +7,20 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
-// fakeBao stands in for OpenBao's OIDC endpoints.
+// fakeBao stands in for OpenBao's OIDC endpoints. It remembers the
+// client_nonce presented to auth_url and requires the callback exchange to
+// present the identical value: the nonce exists to bind the two requests
+// together, and a regression that regenerates it for the exchange would
+// otherwise pass unnoticed.
 func fakeBao(t *testing.T, authURLFor func(redirect string) string) *httptest.Server {
 	t.Helper()
+	var mu sync.Mutex
+	var authNonce string
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/oidc/auth_url"):
@@ -26,6 +33,9 @@ func fakeBao(t *testing.T, authURLFor func(redirect string) string) *httptest.Se
 			if body.RedirectURI == "" || body.ClientNonce == "" {
 				t.Errorf("auth_url request missing fields: %+v", body)
 			}
+			mu.Lock()
+			authNonce = body.ClientNonce
+			mu.Unlock()
 			json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]any{"auth_url": authURLFor(body.RedirectURI)},
 			})
@@ -33,6 +43,12 @@ func fakeBao(t *testing.T, authURLFor func(redirect string) string) *httptest.Se
 			q := r.URL.Query()
 			if q.Get("code") == "" || q.Get("state") == "" || q.Get("client_nonce") == "" {
 				t.Errorf("callback exchange missing params: %v", q)
+			}
+			mu.Lock()
+			want := authNonce
+			mu.Unlock()
+			if got := q.Get("client_nonce"); got != want {
+				t.Errorf("callback client_nonce = %q, want %q (must match the auth_url request)", got, want)
 			}
 			json.NewEncoder(w).Encode(map[string]any{
 				"auth": map[string]any{"client_token": "hvs.oidc-token"},
@@ -172,5 +188,28 @@ func TestOIDCOmitsAnEmptyRole(t *testing.T) {
 
 	if sawRole {
 		t.Error("an empty role was sent; it must be omitted entirely")
+	}
+}
+
+// A transport failure must not leak the authorization code or client_nonce.
+// Go's *url.Error embeds the full request URL in Error(), and the callback
+// exchange carries both as query parameters.
+func TestOIDCTransportErrorDoesNotLeakCredentials(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Close() // closed immediately: any request against it fails at the transport layer
+
+	cfg := OIDCConfig{Addr: srv.URL, Mount: "oidc"}
+	const secretCode = "SUPER-SECRET-AUTH-CODE"
+	const secretNonce = "SUPER-SECRET-CLIENT-NONCE"
+
+	_, err := cfg.exchange(context.Background(), "xyz", secretCode, secretNonce)
+	if err == nil {
+		t.Fatal("expected a transport error against a closed server")
+	}
+	if strings.Contains(err.Error(), secretCode) {
+		t.Errorf("err leaked the authorization code: %v", err)
+	}
+	if strings.Contains(err.Error(), secretNonce) {
+		t.Errorf("err leaked the client_nonce: %v", err)
 	}
 }
