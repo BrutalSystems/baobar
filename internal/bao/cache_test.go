@@ -112,6 +112,13 @@ func TestCacheFresh(t *testing.T) {
 			Cache{CheckedAt: 9_900, ExpiresAt: 20_000, Token: TokenStamp{ModTime: 400, Size: 95}}, false},
 		{"token file changed size only",
 			Cache{CheckedAt: 9_900, ExpiresAt: 20_000, Token: TokenStamp{ModTime: 500, Size: 12}}, false},
+		// A non-expiring token still gets re-verified: nothing else would ever
+		// notice it had been revoked.
+		{"non-expiring but checked too long ago",
+			Cache{CheckedAt: 9_000, ExpiresAt: 0, NeverExpires: true, Token: stamp}, false},
+		// Expiry is exclusive: a token expiring exactly now is not fresh.
+		{"expires exactly now",
+			Cache{CheckedAt: 9_900, ExpiresAt: 10_000, Token: stamp}, false},
 	}
 
 	for _, tc := range tests {
