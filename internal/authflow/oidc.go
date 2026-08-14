@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -131,7 +132,11 @@ func (c OIDCConfig) authURL(ctx context.Context, redirectURI, clientNonce string
 			AuthURL string `json:"auth_url"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	// Capped at maxResponseBody (defined in userpass.go, shared across this
+	// package): this response now comes through a client that refuses to
+	// follow a redirect, but a hostile or misconfigured server answering
+	// directly should still not get this process to decode an unbounded body.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBody)).Decode(&body); err != nil {
 		return "", fmt.Errorf("decode auth URL: %w", err)
 	}
 	if body.Data.AuthURL == "" {
@@ -166,7 +171,8 @@ func (c OIDCConfig) exchange(ctx context.Context, state, code, clientNonce strin
 			ClientToken string `json:"client_token"`
 		} `json:"auth"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	// See the auth URL decode above: capped for the same reason.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBody)).Decode(&body); err != nil {
 		return "", fmt.Errorf("decode token: %w", err)
 	}
 	if body.Auth.ClientToken == "" {

@@ -6,12 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
 	"time"
 )
+
+// maxResponseBody caps how much of a response body login/validate will
+// decode. Both requests now run through a client that refuses to follow a
+// redirect (see client()'s CheckRedirect), but a hostile or misconfigured
+// server that answers directly is still a possibility, and this process
+// should not decode an unbounded payload from it — mirrors bao.Client's cap.
+const maxResponseBody = 1 << 20
 
 var (
 	// ErrBadCredentials means the username or password was rejected.
@@ -100,7 +108,7 @@ func (c UserpassConfig) login(ctx context.Context, username, password string) (s
 	}
 
 	var ar authResponse
-	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBody)).Decode(&ar); err != nil {
 		return "", nil, fmt.Errorf("decode login response: %w", err)
 	}
 
@@ -171,7 +179,7 @@ func (c UserpassConfig) validate(ctx context.Context, ch *mfaChallenge, passcode
 	}
 
 	var ar authResponse
-	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBody)).Decode(&ar); err != nil {
 		return "", fmt.Errorf("decode validate response: %w", err)
 	}
 	if ar.Auth.ClientToken == "" {
