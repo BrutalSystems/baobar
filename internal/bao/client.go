@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -42,6 +43,10 @@ func (c *Client) LookupSelf(ctx context.Context, token string, now time.Time) (I
 	}
 	defer resp.Body.Close()
 
+	// Cap the response body: a tray app polling forever against an uncontrolled server
+	// should not decode unbounded payloads.
+	limBody := io.LimitReader(resp.Body, 1<<20)
+
 	var body struct {
 		Data struct {
 			ExpireTime  string   `json:"expire_time"`
@@ -50,7 +55,7 @@ func (c *Client) LookupSelf(ctx context.Context, token string, now time.Time) (I
 			Policies    []string `json:"policies"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(limBody).Decode(&body); err != nil {
 		return Info{}, fmt.Errorf("decode lookup-self: %w", err)
 	}
 
@@ -69,9 +74,18 @@ func (c *Client) LookupSelf(ctx context.Context, token string, now time.Time) (I
 		}
 		info.ExpiresAt = t.UTC()
 	case body.Data.TTL > 0:
-		info.ExpiresAt = now.Add(time.Duration(body.Data.TTL) * time.Second).UTC()
+		// Guard against overflow: if TTL is very large (>100 years), treat as non-expiring.
+		if body.Data.TTL > 3_153_600_000 {
+			info.NeverExpires = true
+			info.ExpiresAt = now.UTC()
+		} else {
+			info.ExpiresAt = now.Add(time.Duration(body.Data.TTL) * time.Second).UTC()
+		}
+	case body.Data.TTL < 0:
+		// Negative TTL is malformed; safe reading is "already expired".
+		info.ExpiresAt = now.UTC()
 	default:
-		// No expire_time and no ttl: a root or otherwise non-expiring token.
+		// No expire_time and no ttl (TTL == 0): a root or otherwise non-expiring token.
 		info.NeverExpires = true
 	}
 	return info, nil

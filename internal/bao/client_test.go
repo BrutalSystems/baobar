@@ -127,3 +127,93 @@ func TestRevokeSelf(t *testing.T) {
 		t.Error("server was never called")
 	}
 }
+
+// Non-auth status codes must NOT be reported as ErrForbidden.
+func TestDoStatusCodeDistinction(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		isForbidden bool
+	}{
+		{"500", http.StatusInternalServerError, false},
+		{"429", http.StatusTooManyRequests, false},
+		{"401", http.StatusUnauthorized, true},
+		{"403", http.StatusForbidden, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.status)
+				w.Write([]byte(`{"error":"test"}`))
+			}))
+			defer srv.Close()
+
+			_, err := NewClient(srv.URL).LookupSelf(context.Background(), "t", time.Now())
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			isForbidden := errors.Is(err, ErrForbidden)
+			if isForbidden != tt.isForbidden {
+				t.Errorf("errors.Is(err, ErrForbidden) = %v, want %v", isForbidden, tt.isForbidden)
+			}
+		})
+	}
+}
+
+// 204 on lookup-self is malformed and must error (not succeed or panic).
+func TestLookupSelf204IsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	_, err := NewClient(srv.URL).LookupSelf(context.Background(), "t", time.Now())
+	if err == nil {
+		t.Fatal("expected an error for 204 on lookup-self")
+	}
+	if errors.Is(err, ErrForbidden) {
+		t.Errorf("204 must not be reported as ErrForbidden")
+	}
+}
+
+// Negative TTL is malformed and should set ExpiresAt to now (expired), not NeverExpires.
+func TestLookupSelfNegativeTTL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":{"expire_time":"","ttl":-1,"display_name":"x","policies":["default"]}}`))
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	info, err := NewClient(srv.URL).LookupSelf(context.Background(), "t", now)
+	if err != nil {
+		t.Fatalf("LookupSelf: %v", err)
+	}
+	if info.NeverExpires {
+		t.Error("NeverExpires = true, want false for negative TTL")
+	}
+	if !info.ExpiresAt.Equal(now.UTC()) {
+		t.Errorf("ExpiresAt = %v, want %v (now)", info.ExpiresAt, now.UTC())
+	}
+}
+
+// Very large TTL that would overflow should set NeverExpires, not panic or return a past time.
+func TestLookupSelfVeryLargeTTLOverflow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":{"expire_time":"","ttl":9000000000,"display_name":"x","policies":["default"]}}`))
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	info, err := NewClient(srv.URL).LookupSelf(context.Background(), "t", now)
+	if err != nil {
+		t.Fatalf("LookupSelf: %v", err)
+	}
+	if !info.NeverExpires {
+		t.Error("NeverExpires = false, want true for large TTL")
+	}
+	// Also verify that ExpiresAt is not before now (which would be overflow artifact).
+	if info.ExpiresAt.Before(now) {
+		t.Errorf("ExpiresAt = %v is before now %v (overflow artifact)", info.ExpiresAt, now)
+	}
+}
