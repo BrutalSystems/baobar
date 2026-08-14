@@ -96,6 +96,54 @@ func TestCommandRejectsUnsafeAddr(t *testing.T) {
 	}
 }
 
+func TestLaunchSubstitutesTerminalEnvOnLinux(t *testing.T) {
+	getenv := func(k string) string {
+		if k == "TERMINAL" {
+			return "alacritty"
+		}
+		return ""
+	}
+	name, args, err := launch("linux", getenv, "https://bao.example.com", MethodUserpass)
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if name != "alacritty" {
+		t.Errorf("name = %q, want $TERMINAL value %q", name, "alacritty")
+	}
+	// Substitution only replaces the command name; the -e sh -c ... argument
+	// shape (and the bao invocation inside it) must be unchanged.
+	if !strings.Contains(strings.Join(args, " "), "bao login") {
+		t.Errorf("args = %q, want it to still contain the bao login script", args)
+	}
+}
+
+func TestLaunchKeepsDefaultWhenTerminalEnvUnset(t *testing.T) {
+	getenv := func(string) string { return "" }
+	name, _, err := launch("linux", getenv, "https://bao.example.com", MethodUserpass)
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if name != "x-terminal-emulator" {
+		t.Errorf("name = %q, want the Debian-alternatives default when $TERMINAL is unset", name)
+	}
+}
+
+func TestLaunchIgnoresTerminalEnvOnNonLinux(t *testing.T) {
+	getenv := func(k string) string {
+		if k == "TERMINAL" {
+			return "alacritty"
+		}
+		return ""
+	}
+	name, _, err := launch("darwin", getenv, "https://bao.example.com", MethodUserpass)
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if name != "osascript" {
+		t.Errorf("name = %q, want osascript — $TERMINAL must not leak into other platforms", name)
+	}
+}
+
 func TestCLIAvailable(t *testing.T) {
 	found := func(string) (string, error) { return "/opt/homebrew/bin/bao", nil }
 	missing := func(string) (string, error) { return "", errors.New("executable file not found in $PATH") }

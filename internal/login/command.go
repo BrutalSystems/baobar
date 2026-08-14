@@ -5,6 +5,7 @@ package login
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 
@@ -44,6 +45,12 @@ func Command(goos, addr, method string) (string, []string, error) {
 		return "cmd", []string{"/c", "start", "powershell", "-NoExit", "-Command", ps}, nil
 
 	case "linux":
+		// x-terminal-emulator is a Debian/Ubuntu alternatives-system name; it
+		// does not exist on Fedora, Arch, and other non-Debian-derived
+		// distros. It is still the right pure default here — Command takes
+		// no environment input — but Launch substitutes $TERMINAL over this
+		// name when the user has one set, so the login click isn't a dead
+		// end on those distros.
 		script := fmt.Sprintf("VAULT_ADDR=%s %s; exec $SHELL", addr, baoCmd)
 		return "x-terminal-emulator", []string{"-e", "sh", "-c", script}, nil
 
@@ -54,11 +61,31 @@ func Command(goos, addr, method string) (string, []string, error) {
 
 // Launch starts the login terminal and returns without waiting for it.
 func Launch(addr, method string) error {
-	name, args, err := Command(runtime.GOOS, addr, method)
+	name, args, err := launch(runtime.GOOS, os.Getenv, addr, method)
 	if err != nil {
 		return err
 	}
 	return exec.Command(name, args...).Start()
+}
+
+// launch is Launch's testable seam. goos and getenv are parameters so the
+// $TERMINAL substitution below can be exercised in a test without depending
+// on the actual OS or environment. Command itself stays pure — no
+// environment reads — so this is the one place that decision belongs: on
+// Linux, when $TERMINAL is set, it replaces the Debian-specific
+// x-terminal-emulator default rather than the login click silently doing
+// nothing on a non-Debian-derived distro.
+func launch(goos string, getenv func(string) string, addr, method string) (string, []string, error) {
+	name, args, err := Command(goos, addr, method)
+	if err != nil {
+		return "", nil, err
+	}
+	if goos == "linux" {
+		if t := getenv("TERMINAL"); t != "" {
+			name = t
+		}
+	}
+	return name, args, nil
 }
 
 // CLIAvailable reports whether `bao` is on PATH. M1 cannot log in without it,
