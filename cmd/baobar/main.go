@@ -1,0 +1,92 @@
+// Command baobar shows OpenBao login status in the system tray.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"runtime"
+	"time"
+
+	"github.com/brutalsystems/baobar/internal/bao"
+	"github.com/brutalsystems/baobar/internal/config"
+	"github.com/brutalsystems/baobar/internal/login"
+	"github.com/brutalsystems/baobar/internal/notify"
+	"github.com/brutalsystems/baobar/internal/tray"
+)
+
+func main() {
+	// Baobar is usually launched by double-click, where there is no terminal to
+	// read. Configuration problems therefore go to the tray, not to stderr —
+	// exiting here would look identical to the app simply not starting.
+	cfgPath, tokenPath, cachePath, err := config.DefaultPaths()
+	if err != nil {
+		tray.Run(tray.Options{ConfigError: "Cannot locate your home directory: " + err.Error()})
+		return
+	}
+
+	cfg, err := config.Load(cfgPath, os.Getenv)
+	if err != nil {
+		tray.Run(tray.Options{ConfigError: fmt.Sprintf("%v (config: %s)", err, cfgPath)})
+		return
+	}
+
+	client := bao.NewClient(cfg.Addr)
+	poller := &bao.Poller{
+		Client:    client,
+		TokenPath: tokenPath,
+		CachePath: cachePath,
+		Recheck:   cfg.Recheck,
+		Warn:      cfg.Warn,
+		Now:       time.Now,
+	}
+	tracker := notify.NewTracker(30*time.Minute, 5*time.Minute)
+
+	tray.Run(tray.Options{
+		Addr:         cfg.Addr,
+		CLIAvailable: login.CLIAvailable(),
+		Status:       poller.Status,
+		Logout: func() error {
+			token, err := bao.ReadToken(tokenPath)
+			if err == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = client.RevokeSelf(ctx, token)
+			}
+			_ = bao.DeleteCache(cachePath)
+			return removeToken(tokenPath)
+		},
+		Login: func(method string) error {
+			// Drop the cache so the next poll re-checks as soon as login lands.
+			_ = bao.DeleteCache(cachePath)
+			return login.Launch(cfg.Addr, method)
+		},
+		Refresh:    func() { _ = bao.DeleteCache(cachePath) },
+		Thresholds: tracker.Crossed,
+		Notify: func(threshold time.Duration) {
+			_ = notify.Send("OpenBao", fmt.Sprintf("Your token expires in less than %s", tray.Human(threshold)))
+		},
+		OpenURL: openURL,
+	})
+}
+
+func openURL(url string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", url).Start()
+	case "windows":
+		return exec.Command("cmd", "/c", "start", url).Start()
+	default:
+		return exec.Command("xdg-open", url).Start()
+	}
+}
+
+func removeToken(path string) error {
+	err := os.Remove(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}

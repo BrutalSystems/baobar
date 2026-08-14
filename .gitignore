@@ -1,6 +1,6 @@
 docs/local/
 .superpowers/
 .DS_Store
-baobar
-baobar.exe
+/baobar
+/baobar.exe
 dist/

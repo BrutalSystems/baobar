@@ -5,6 +5,7 @@ go 1.26.3
 require github.com/BurntSushi/toml v1.6.0
 
 require (
+	fyne.io/systray v1.12.2 // indirect
 	git.sr.ht/~jackmordaunt/go-toast v1.1.2 // indirect
 	github.com/esiqveland/notify v0.13.3 // indirect
 	github.com/gen2brain/beeep v0.11.2 // indirect
