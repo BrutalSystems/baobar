@@ -17,6 +17,8 @@ var (
 	iconSignedOut []byte
 	//go:embed assets/degraded.png
 	iconDegraded []byte
+	//go:embed assets/configerror.png
+	iconConfigError []byte
 )
 
 // Icon returns the tray image for a state. On Windows this is the only signal
@@ -33,4 +35,12 @@ func Icon(s bao.State) []byte {
 	default:
 		return iconSignedOut
 	}
+}
+
+// IconConfigError is the misconfiguration-state icon: a filled triangle,
+// distinct by SHAPE (not merely a fifth hue) from the four circular state
+// icons above, so a misconfigured Baobar cannot be mistaken for a signed-out
+// one on Windows, where the icon plus tooltip is the whole signal.
+func IconConfigError() []byte {
+	return iconConfigError
 }

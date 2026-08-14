@@ -146,17 +146,25 @@ func TestMenuLines(t *testing.T) {
 	}
 }
 
-// Every state needs its own icon: on Windows it is the only signal.
+// Every state needs its own icon: on Windows it is the only signal. This
+// includes the config-error icon, which must be distinct from all four token
+// states — most importantly from signed-out, since it is the icon that could
+// otherwise most easily be reused for it by mistake.
 func TestEveryStateHasADistinctIcon(t *testing.T) {
-	seen := map[string]bao.State{}
-	for _, s := range []bao.State{bao.StateSignedIn, bao.StateExpiring, bao.StateSignedOut, bao.StateDegraded} {
-		b := Icon(s)
+	seen := map[string]string{}
+	check := func(name string, b []byte) {
+		t.Helper()
 		if len(b) == 0 {
-			t.Fatalf("Icon(%v) is empty", s)
+			t.Fatalf("Icon(%s) is empty", name)
 		}
 		if prev, dup := seen[string(b)]; dup {
-			t.Errorf("Icon(%v) is identical to Icon(%v)", s, prev)
+			t.Errorf("Icon(%s) is identical to Icon(%s)", name, prev)
 		}
-		seen[string(b)] = s
+		seen[string(b)] = name
 	}
+
+	for _, s := range []bao.State{bao.StateSignedIn, bao.StateExpiring, bao.StateSignedOut, bao.StateDegraded} {
+		check(s.String(), Icon(s))
+	}
+	check("config-error", IconConfigError())
 }
