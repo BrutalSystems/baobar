@@ -1,8 +1,8 @@
 # Baobar
 
 A menu bar / system tray indicator for [OpenBao](https://openbao.org): shows whether you
-are signed in, how long your token has left, and gets you signed back in without opening a
-terminal. macOS, Windows, and Linux.
+are signed in and how long your token has left, everywhere a shell-script plugin can't
+(Windows has no menu-bar-script host). macOS, Windows, and Linux.
 
 ```
 🔓 6h19m          signed in, 6h19m remaining
@@ -11,9 +11,18 @@ terminal. macOS, Windows, and Linux.
 🌐 6h19m          server unreachable, counting down from the last known session
 ```
 
-Baobar polls `lookup-self` at most once per `BAOBAR_RECHECK` window and recomputes the
-countdown locally every second in between — see [The audit-log invariant](#the-audit-log-invariant)
-before touching that interval.
+In M1, logging back in still opens a terminal running `bao login` — see
+[Status](#status) and [State table](#state-table) below. Baobar closes the "am I signed
+in" gap on Windows today; closing the "sign back in without a terminal" gap is M2/M3, not
+yet built.
+
+Baobar contacts the server (`lookup-self`) at most once per `BAOBAR_RECHECK` window,
+throttled by wall-clock time rather than by whether a cache happens to exist — an expired
+token, an unwritable cache, or an unreachable server all stay inside that same one-request
+budget instead of retrying every poll tick. The countdown itself is recomputed locally
+every second in between, with no network call. Clicking "Refresh now" is the one
+deliberate exception: it forces the very next check past the throttle. See
+[The audit-log invariant](#the-audit-log-invariant) before touching `BAOBAR_RECHECK`.
 
 ## Status
 
@@ -105,10 +114,15 @@ clamped, and shows up as a ⚠️ config error in the tray rather than a log lin
 
 The token's expiry is absolute, so the on-screen countdown is computed locally every
 second and the server is consulted at most once per `BAOBAR_RECHECK` window (5 minutes by
-default). A revoked token is still noticed within that window. Redrawing the countdown is
-free — it touches no network — so do not "fix" the perceived staleness by shortening
-`BAOBAR_RECHECK` or removing the cache; that just multiplies audit noise for the same
-freshness you already have.
+default). That budget holds unconditionally — an expired token, a cache the app couldn't
+write, or a server that's simply down all still cost at most one request per window, not
+one per poll tick — because the throttle is timed from the last attempt, not gated on a
+cache happening to exist and be fresh. A revoked token is still noticed within that
+window. The one deliberate exception is clicking "Refresh now" (or a login/logout attempt
+completing), which forces the very next check past the throttle on purpose. Redrawing the
+countdown is free — it touches no network — so do not "fix" the perceived staleness by
+shortening `BAOBAR_RECHECK` or removing the cache; that just multiplies audit noise for the
+same freshness you already have.
 
 ## Build matrix
 
