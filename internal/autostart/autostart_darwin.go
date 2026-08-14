@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 )
 
-const label = "com.brutalsystems.baobar"
-
 // New returns a LaunchAgent-backed autostart. A plist works for an unbundled
 // binary; SMAppService would require an app bundle.
 func New() (Autostart, error) {
