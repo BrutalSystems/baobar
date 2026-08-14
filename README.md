@@ -11,10 +11,11 @@ are signed in and how long your token has left, everywhere a shell-script plugin
 [grey]   ~6h19m    server unreachable, counting down from the last known session
 ```
 
-In M1, logging back in still opens a terminal running `bao login` — see
-[Status](#status) and [State table](#state-table) below. Baobar closes the "am I signed
-in" gap on Windows today; closing the "sign back in without a terminal" gap is M2/M3, not
-yet built.
+Logging back in opens your **browser**, not a terminal. Baobar drives both the SSO (OIDC)
+flow and a password+TOTP form itself, over a short-lived loopback listener, and never
+shells out to the `bao` CLI or any terminal for anything — see [Status](#status) and
+[State table](#state-table) below for exactly what that means and what has (and hasn't)
+been exercised against a live server.
 
 Baobar contacts the server (`lookup-self`) at most once per `BAOBAR_RECHECK` window,
 throttled by wall-clock time rather than by whether a cache happens to exist — an expired
@@ -26,22 +27,24 @@ deliberate exception: it forces the very next check past the throttle. See
 
 ## Status
 
-M1 is code-complete: all five internal packages (`bao`, `config`, `notify`, `login`,
-`tray`) are implemented and unit-tested, and `go build` / `go vet` / `go test -race` are
-clean on macOS.
+M1 and M2 are code-complete: all internal packages (`bao`, `config`, `notify`, `tray`,
+`authflow`, `autostart`) are implemented and unit-tested. All Go unit tests pass under
+`-race`; `go build`, `go vet`, and `gofmt` are clean; macOS, Windows, and Linux binaries all
+cross-compile.
 
-**Verified by running it on macOS against a live OpenBao server** (one session):
-the tray item appears, the `Expiring` state renders correctly with its countdown, the menu
-shows identity/policies/expiry, and the audit-log throttle holds — over 100 seconds of
-runtime the cached `checked_at` never moved while the countdown kept ticking, i.e. one
-server request, not one per second.
+**Verified by running it on macOS against a live OpenBao server** (one M1 session, before
+M2's login work began): the tray item appeared, the `Expiring` state rendered correctly
+with its countdown, the menu showed identity/policies/expiry, the signed-out state
+rendered, and the audit-log throttle held — over 100 seconds of runtime the cached
+`checked_at` never moved while the countdown kept ticking, i.e. one server request, not one
+per second.
 
-**Outstanding:** the remaining manual checks from the M1 plan — signed-out and signed-in
-transitions, offline/degraded behavior, logout, both login flows, the warning notification,
-the misconfiguration path, menu responsiveness under a hung server, re-login pickup, and
-behavior with no `bao` CLI on `PATH`. The Windows and Linux binaries compile but have never
-been run on their target platforms. See [Build matrix](#build-matrix) for exactly which
-platforms have and have not been exercised.
+**Not verified — M2's browser-based login has unit tests but has never been run:** no
+login flow, OIDC or userpass, has been exercised against a live server or a real browser;
+the "Start at login" checkbox has never been clicked; and the Windows and Linux binaries
+have never been run on their own platforms. See [Build matrix](#build-matrix) for exactly
+which platforms have and have not been exercised — the code is believed correct because it
+is tested, not because it has been watched working.
 
 ## State table
 
@@ -65,8 +68,28 @@ the same state in a full sentence, e.g. "OpenBao: signed in as userpass-dev, 6h1
 
 The tray menu itself always shows who you're signed in as, your policies (`default`
 filtered out), the expiry, a "Log out (revoke token)" item, two login items ("Login with
-password + TOTP", "Login with SSO" — each opens a terminal running `bao login`), a manual
-"Refresh now", and Quit.
+password + TOTP", "Login with SSO" — each opens a browser tab; see [Login](#login) below),
+a "Start at login" checkbox (see [Start at login](#start-at-login)), a manual "Refresh
+now", and Quit.
+
+## Login
+
+Both login items open your default browser instead of a terminal. Baobar never invokes the
+`bao` CLI, and does not require it to be installed, for login or anything else.
+
+- **Login with SSO** drives an OIDC flow: Baobar asks OpenBao for an authorization URL,
+  opens it in your browser, and catches the redirect on a short-lived `127.0.0.1` listener.
+  See [callback_port](#configuration) below — this is the single most likely thing to trip
+  up a first run.
+- **Login with password + TOTP** opens a small form, served from that same loopback
+  listener behind an unguessable, single-use path (a random nonce), in your browser.
+  Credentials live only in the POST request that carries them to OpenBao — Baobar never
+  writes a password or passcode to disk or to a log. A wrong password or passcode
+  re-renders the same page with an error and asks again; the form does not navigate away or
+  lose the username you already typed.
+
+Either flow writes the resulting token to `~/.vault-token` on success, exactly as a
+successful `bao login` would, and the tray picks it up on its next refresh.
 
 ## Install
 
@@ -102,6 +125,11 @@ The file lives at the OS-appropriate config directory (`os.UserConfigDir()`):
 addr = "https://bao.example.com"
 recheck = "5m"
 warn = "30m"
+oidc_mount = "oidc"
+oidc_role = ""
+userpass_mount = "userpass"
+callback_port = 8250
+username = ""
 ```
 
 | Setting | Env var | Default | Notes |
@@ -109,10 +137,39 @@ warn = "30m"
 | OpenBao address | `VAULT_ADDR` | — (required) | must be a bare `http(s)://host[:port][/path]`, no userinfo or query string |
 | Recheck interval | `BAOBAR_RECHECK` | `5m` | how often the server is actually asked; hard floor of 60s |
 | Warning threshold | `BAOBAR_WARN` | `30m` | remaining time at which the icon turns amber and a notification fires |
+| OIDC mount | `BAOBAR_OIDC_MOUNT` | `oidc` | auth mount path used for SSO login |
+| OIDC role | `BAOBAR_OIDC_ROLE` | *(empty)* | role name passed to the OIDC auth URL request; the `role` field is omitted from the request entirely when this is empty |
+| Userpass mount | `BAOBAR_USERPASS_MOUNT` | `userpass` | auth mount path used for password + TOTP login |
+| Callback port | `BAOBAR_CALLBACK_PORT` | `8250` | port Baobar listens on for the OIDC redirect — see below, this must match the role |
+| Username | `BAOBAR_USERNAME` | *(empty)* | prefills the username field on the password + TOTP form; it is never treated as a credential and never sent anywhere by itself |
+
+**`callback_port` must match the OIDC role's allowed redirect URI**, and the redirect URI
+Baobar sends is `http://127.0.0.1:<callback_port>/oidc/callback` — using the IP address
+`127.0.0.1`, not the hostname `localhost`. This is because Baobar's callback listener binds
+IPv4 loopback only, so a role whose allowed redirect URIs list only
+`http://localhost:8250/oidc/callback` needs the `127.0.0.1` variant added alongside it (or
+in place of it) before SSO login will work. This is the single most likely thing to trip up
+a first run.
 
 Baobar also reads and writes `~/.vault-token` (`%USERPROFILE%\.vault-token` on Windows) —
-the same file the `bao` CLI and SOPS use — and caches the last known expiry, display name,
-and policies (never the token itself) under `os.UserCacheDir()`.
+the same file the `bao` CLI and SOPS use, for compatibility — and caches the last known
+expiry, display name, and policies (never the token itself) under `os.UserCacheDir()`.
+Baobar does not require the `bao` CLI to be installed and never invokes it; the shared file
+format is the only connection between them.
+
+### Start at login
+
+The "Start at login" tray checkbox reflects and controls a real, platform-native autostart
+entry — not a remembered setting, so the checkbox always shows what's actually on disk:
+
+| Platform | Mechanism | Location |
+|---|---|---|
+| macOS | LaunchAgent plist | `~/Library/LaunchAgents/com.brutalsystems.baobar.plist` |
+| Windows | per-user Run key (no elevation needed) | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |
+| Linux | XDG autostart entry | `~/.config/autostart/baobar.desktop` |
+
+Checking the box writes the entry, pointing at the current executable's path; unchecking it
+removes the entry. Removing an already-absent entry is not an error.
 
 ### The audit-log invariant
 
@@ -145,10 +202,11 @@ same freshness you already have.
 | Linux | `GOOS=linux GOARCH=amd64 go build -o dist/baobar-linux ./cmd/baobar` | also cross-compiles cleanly from macOS as of `fyne.io/systray` v1.12.2, which talks to the tray over D-Bus (`StatusNotifierItem`) in pure Go rather than linking GTK/appindicator via cgo. No `gcc`/`libgtk-3-dev`/`libayatana-appindicator3-dev` were needed to produce the binary used here. That build has not yet been *run* on a Linux desktop, so treat "the tray actually appears" as unverified rather than "impossible without cgo" — if a future systray version reintroduces a cgo path, `apt-get install gcc libgtk-3-dev libayatana-appindicator3-dev` is the fallback for building on/for Linux |
 
 The Windows binary **builds** (cross-compiled from macOS as shown above) but has **not
-been run** on a Windows machine: the tray icon color change across states and the tooltip
-countdown are implemented per the design doc's platform notes below, but neither has
-actually been eyeballed on Windows yet. Same caveat as Linux above — compiling is not the
-same as verifying the tray renders correctly. Both are open items before M1 sign-off.
+been run** on a Windows machine: the tray icon color change across states, the tooltip
+countdown, and the M2 login/autostart flows are implemented per the design docs linked
+below, but none of it has actually been eyeballed on Windows yet. Same caveat as Linux
+above — compiling is not the same as verifying any of this renders or runs correctly. Both
+remain open items pending a manual pass on real hardware.
 
 ## Platform notes
 
@@ -166,8 +224,13 @@ Full rationale, alternatives considered, and the M1 plan:
 [`docs/superpowers/specs/2026-08-13-baobar-design.md`](docs/superpowers/specs/2026-08-13-baobar-design.md)
 · [`docs/superpowers/plans/2026-08-13-baobar-m1-indicator.md`](docs/superpowers/plans/2026-08-13-baobar-m1-indicator.md)
 
-Not in M1, by design: in-app login (M2/M3), autostart, token renewal, refined artwork,
-goreleaser, a Homebrew cask, signing and notarization.
+Browser-based login and start-at-login (M2), including the loopback listener, the nonce
+scheme, and the redirect-URI subtlety documented above:
+[`docs/superpowers/specs/2026-08-13-baobar-m2-terminal-free-login-design.md`](docs/superpowers/specs/2026-08-13-baobar-m2-terminal-free-login-design.md)
+· [`docs/superpowers/plans/2026-08-13-baobar-m2-terminal-free-login.md`](docs/superpowers/plans/2026-08-13-baobar-m2-terminal-free-login.md)
+
+Not yet built, by design: token renewal, refined artwork, goreleaser, a Homebrew cask,
+signing and notarization.
 
 ## License
 

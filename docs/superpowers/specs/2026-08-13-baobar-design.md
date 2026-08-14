@@ -3,7 +3,12 @@
 **Status:** M1 implemented on branch `m1-indicator` — all packages unit-tested, and the app
 has been run once on macOS against a live server (the indicator, the countdown, and the
 audit-log throttle were confirmed working; the remaining manual checks are outstanding).
-M2 and M3 are not started. See the README for exactly what is and is not verified.
+The milestones below split userpass+TOTP (M2) and OIDC/SSO (M3) into two phases; that split
+was later reordered and merged into a single milestone, also called M2, covering both plus
+start-at-login — see
+[`2026-08-13-baobar-m2-terminal-free-login-design.md`](2026-08-13-baobar-m2-terminal-free-login-design.md).
+That milestone is implemented and unit-tested, but not yet exercised against a live server.
+See the README for exactly what is and is not verified.
 **Date:** 2026-08-13
 
 A cross-platform menu bar / system tray app that shows whether you are signed in to
@@ -238,6 +243,12 @@ bare Windows machine the login items are a dead end until M2.
 M1 must therefore detect a missing `bao` CLI, disable the login items, say why, and leave
 the web UI link as the way through. Claiming M1 "solves Windows" would be overselling it:
 it solves *knowing*, not *acting*. M2 solves acting.
+
+> **Superseded.** M2 shipped browser-based login for both flows, on every platform. The
+> terminal shell-out, the `bao`-CLI dependency, and the "dead end on a bare Windows
+> machine" limitation described above no longer exist in the code. See
+> [`2026-08-13-baobar-m2-terminal-free-login-design.md`](2026-08-13-baobar-m2-terminal-free-login-design.md).
+> The reasoning above is kept for the record.
 
 Menu layout, ported from the prototype:
 

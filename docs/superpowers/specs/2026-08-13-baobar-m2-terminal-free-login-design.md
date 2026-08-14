@@ -1,6 +1,8 @@
 # Baobar M2 — terminal-free login and autostart
 
-**Status:** approved, not yet implemented.
+**Status:** implemented and unit-tested on branch `m2-terminal-free-login`; not yet
+exercised against a live server or a real browser (see the README's Status section for
+exactly what that does and doesn't cover).
 **Date:** 2026-08-13
 **Supersedes:** the M2/M3 split in `2026-08-13-baobar-design.md`. That document ordered
 userpass+TOTP before OIDC; this one does both in one milestone and reverses the emphasis.
