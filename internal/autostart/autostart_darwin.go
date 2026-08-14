@@ -1,6 +1,8 @@
 package autostart
 
 import (
+	"bytes"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +21,10 @@ func New() (Autostart, error) {
 		path: filepath.Join(home, "Library", "LaunchAgents", label+".plist"),
 		exe:  os.Executable,
 		render: func(exe string) []byte {
+			var esc bytes.Buffer
+			if err := xml.EscapeText(&esc, []byte(exe)); err != nil {
+				return nil
+			}
 			return []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -28,7 +34,7 @@ func New() (Autostart, error) {
 	<key>RunAtLoad</key><true/>
 </dict>
 </plist>
-`, label, exe))
+`, label, esc.String()))
 		},
 	}, nil
 }
