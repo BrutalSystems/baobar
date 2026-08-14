@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"time"
 )
@@ -62,11 +63,11 @@ type authResponse struct {
 // challenge (MFA required) — never both.
 func (c UserpassConfig) login(ctx context.Context, username, password string) (string, *mfaChallenge, error) {
 	body, _ := json.Marshal(map[string]string{"password": password})
-	endpoint := fmt.Sprintf("%s/v1/auth/%s/login/%s", c.Addr, c.Mount, username)
+	endpoint := fmt.Sprintf("%s/v1/auth/%s/login/%s", c.Addr, c.Mount, url.PathEscape(username))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", nil, err
+		return "", nil, sanitize(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -137,7 +138,7 @@ func (c UserpassConfig) validate(ctx context.Context, ch *mfaChallenge, passcode
 	endpoint := c.Addr + "/v1/sys/mfa/validate"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return "", sanitize(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 

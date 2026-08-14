@@ -35,6 +35,68 @@ func TestUserpassLoginWithoutMFA(t *testing.T) {
 	}
 }
 
+// Ordinary usernames must survive url.PathEscape unchanged: '@' and '.' are
+// legal path characters, so an OIDC-style email address must not be mangled.
+func TestUserpassLoginEscapesOrdinaryUsernamesUnchanged(t *testing.T) {
+	for _, username := range []string{"userpass-dev", "someone@example.com"} {
+		var gotPath string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.EscapedPath()
+			json.NewEncoder(w).Encode(map[string]any{
+				"auth": map[string]any{"client_token": "hvs.tok"},
+			})
+		}))
+
+		cfg := UserpassConfig{Addr: srv.URL, Mount: "userpass"}
+		if _, _, err := cfg.login(context.Background(), username, "pw"); err != nil {
+			t.Fatalf("login(%q): %v", username, err)
+		}
+		want := "/v1/auth/userpass/login/" + username
+		if gotPath != want {
+			t.Errorf("username %q: path = %s, want %s", username, gotPath, want)
+		}
+		srv.Close()
+	}
+}
+
+// A username is free text from a form. Left unescaped, one containing "/"
+// could rewrite the request path onto a different endpoint entirely — e.g.
+// "../../sys/mfa/validate" — sending the password somewhere other than the
+// intended login route. url.PathEscape must keep it confined to a single
+// path segment.
+//
+// r.URL.Path is checked here via EscapedPath()/RawPath rather than the bare
+// Path field: net/url's Path is the *decoded* form (it turns a wire-level
+// "%2F" back into a literal "/"), which would reintroduce exactly the
+// ambiguity being defended against. EscapedPath reflects what was actually
+// sent on the wire, which is what a router makes its decision from.
+func TestUserpassLoginEscapesPathTraversalInUsername(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		json.NewEncoder(w).Encode(map[string]any{
+			"auth": map[string]any{"client_token": "hvs.tok"},
+		})
+	}))
+	defer srv.Close()
+
+	const username = "../../sys/mfa/validate"
+	cfg := UserpassConfig{Addr: srv.URL, Mount: "userpass"}
+	if _, _, err := cfg.login(context.Background(), username, "pw"); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if strings.Contains(gotPath, "sys/mfa/validate") {
+		t.Fatalf("path = %s, username traversal was not escaped", gotPath)
+	}
+	want := "/v1/auth/userpass/login/..%2F..%2Fsys%2Fmfa%2Fvalidate"
+	if gotPath != want {
+		t.Fatalf("path = %s, want %s", gotPath, want)
+	}
+	if !strings.HasPrefix(gotPath, "/v1/auth/userpass/login/") {
+		t.Fatalf("path = %s, want prefix /v1/auth/userpass/login/", gotPath)
+	}
+}
+
 func TestUserpassLoginReturnsMFAChallengeByUUID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"auth":{"client_token":"","mfa_requirement":{
@@ -99,6 +161,54 @@ func TestUserpassChallengeSelectionIsDeterministic(t *testing.T) {
 		if ch.MethodKey != "uuid-a" {
 			t.Fatalf("run %d picked %q, want uuid-a every time (sorted by enforcement name)", i, ch.MethodKey)
 		}
+	}
+}
+
+// A method that doesn't use a passcode (e.g. push/Duo) must never be offered
+// as a TOTP challenge. With no passcode-capable method present, login must
+// fail loudly rather than hand back a challenge nothing can satisfy.
+func TestUserpassChallengeSkipsMethodsWithoutPasscode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"auth":{"mfa_requirement":{
+			"mfa_request_id":"req-4",
+			"mfa_constraints":{"enforcement":{"any":[
+				{"type":"duo","id":"uuid-duo","uses_passcode":false}]}}}}}`))
+	}))
+	defer srv.Close()
+
+	cfg := UserpassConfig{Addr: srv.URL, Mount: "userpass"}
+	token, ch, err := cfg.login(context.Background(), "userpass-dev", "pw")
+	if err == nil {
+		t.Fatalf("login: got nil error, want an error naming the missing passcode method")
+	}
+	if ch != nil {
+		t.Fatalf("challenge = %+v, want nil when no method accepts a passcode", ch)
+	}
+	if token != "" {
+		t.Fatalf("token = %q, want empty", token)
+	}
+}
+
+// When several methods are offered and the first offered doesn't use a
+// passcode, the loop must keep looking rather than stopping at the first
+// (unusable) entry.
+func TestUserpassChallengeSkipsNonPasscodeMethodBeforeValidOne(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"auth":{"mfa_requirement":{
+			"mfa_request_id":"req-5",
+			"mfa_constraints":{"enforcement":{"any":[
+				{"type":"duo","id":"uuid-duo","uses_passcode":false},
+				{"type":"totp","id":"uuid-totp","uses_passcode":true}]}}}}}`))
+	}))
+	defer srv.Close()
+
+	cfg := UserpassConfig{Addr: srv.URL, Mount: "userpass"}
+	_, ch, err := cfg.login(context.Background(), "userpass-dev", "pw")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if ch == nil || ch.MethodKey != "uuid-totp" {
+		t.Fatalf("challenge = %+v, want the passcode-capable method uuid-totp", ch)
 	}
 }
 

@@ -100,7 +100,7 @@ func (c OIDCConfig) authURL(ctx context.Context, redirectURI, clientNonce string
 	endpoint := fmt.Sprintf("%s/v1/auth/%s/oidc/auth_url", c.Addr, c.Mount)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(b))
 	if err != nil {
-		return "", err
+		return "", sanitize(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -136,7 +136,7 @@ func (c OIDCConfig) exchange(ctx context.Context, state, code, clientNonce strin
 	endpoint := fmt.Sprintf("%s/v1/auth/%s/oidc/callback?%s", c.Addr, c.Mount, q.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return "", err
+		return "", sanitize(err)
 	}
 
 	resp, err := c.client().Do(req)
