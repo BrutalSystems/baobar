@@ -35,9 +35,24 @@ type Options struct {
 	Notify     func(threshold time.Duration)
 	OpenURL    func(string) error
 
+	// Alert surfaces a failure the menu would otherwise swallow silently —
+	// e.g. a logout whose revoke call never reached the server, or a login
+	// terminal that failed to launch. title/message are short and never
+	// contain a token value.
+	Alert func(title, message string)
+
 	// PollEvery defaults to one second. This is only how often the poller is
 	// asked; the poller itself decides when that turns into a request.
 	PollEvery time.Duration
+}
+
+// alert calls o.Alert if the caller set one; a nil Alert is silently a no-op
+// rather than a panic, so callers that don't care about surfacing failures
+// (tests, future embedders) don't have to supply a stub.
+func (o Options) alert(title, message string) {
+	if o.Alert != nil {
+		o.Alert(title, message)
+	}
 }
 
 // holder passes the latest Status from the poll goroutine to the UI goroutine.
@@ -69,7 +84,11 @@ func onReady(o Options) {
 func onReadyError(o Options) {
 	systray.SetTitle("⚠️ baobar")
 	systray.SetTooltip("Baobar: " + o.ConfigError)
-	systray.SetIcon(Icon(bao.StateSignedOut))
+	// A dedicated triangle icon, not the signed-out circle: on Windows,
+	// where SetTitle renders no text, reusing the signed-out icon here would
+	// make a misconfigured Baobar indistinguishable from one that is merely
+	// signed out.
+	systray.SetIcon(IconConfigError())
 
 	mMsg := systray.AddMenuItem(o.ConfigError, "Baobar cannot start until this is fixed")
 	mMsg.Disable()
@@ -118,7 +137,13 @@ func onReadyNormal(o Options) {
 	}
 
 	// The poll goroutine is the only caller of o.Status, so a slow or hanging
-	// server cannot block menu clicks.
+	// server cannot block menu clicks. It is also the only caller of
+	// o.Refresh (which forces the poller's next Status call past its
+	// throttle): Poller.Force documents that it must only ever be invoked
+	// from the same goroutine that calls Status, so every other goroutine
+	// that wants a forced recheck — a menu click, or a logout/login attempt
+	// finishing in its own goroutine below — asks for one only by writing to
+	// refresh, never by calling o.Refresh directly.
 	go func() {
 		ctx := context.Background()
 		t := time.NewTicker(o.PollEvery)
@@ -128,6 +153,7 @@ func onReadyNormal(o Options) {
 			select {
 			case <-t.C:
 			case <-refresh:
+				o.Refresh()
 			}
 		}
 	}()
@@ -241,16 +267,36 @@ func uiLoop(o Options, h *holder, refreshCh chan struct{}, m menuItems) {
 		case <-m.addr.ClickedCh:
 			_ = o.OpenURL(o.Addr + "/ui")
 		case <-m.logout.ClickedCh:
-			_ = o.Logout()
-			kick()
+			// Logout does network I/O (RevokeSelf, up to its own timeout).
+			// Run it off the click-handling goroutine so the menu never
+			// freezes, and signal the poll goroutine when it's done rather
+			// than kicking it immediately (the token file may not be gone
+			// yet at click time).
+			go func() {
+				if err := o.Logout(); err != nil {
+					o.alert("Logout incomplete",
+						"The local session was cleared, but the token could not be "+
+							"revoked and remains valid on the server until it expires.")
+				}
+				kick()
+			}()
 		case <-m.userpass.ClickedCh:
-			_ = o.Login("userpass")
-			kick()
+			go func() {
+				if err := o.Login("userpass"); err != nil {
+					o.alert("Could not start login",
+						"The terminal could not be started. Use the web UI link above to sign in instead.")
+				}
+				kick()
+			}()
 		case <-m.oidc.ClickedCh:
-			_ = o.Login("oidc")
-			kick()
+			go func() {
+				if err := o.Login("oidc"); err != nil {
+					o.alert("Could not start login",
+						"The terminal could not be started. Use the web UI link above to sign in instead.")
+				}
+				kick()
+			}()
 		case <-m.refresh.ClickedCh:
-			o.Refresh()
 			kick()
 		case <-m.quit.ClickedCh:
 			systray.Quit()

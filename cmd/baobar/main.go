@@ -49,14 +49,22 @@ func main() {
 		CLIAvailable: login.CLIAvailable(),
 		Status:       poller.Status,
 		Logout: func() error {
+			// The local session is cleared unconditionally — cache and token
+			// file both go — but a failed revoke is reported rather than
+			// swallowed: the token stays valid on the server until it
+			// expires naturally, and the user deserves to know that.
+			var revokeErr error
 			token, err := bao.ReadToken(tokenPath)
 			if err == nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				_ = client.RevokeSelf(ctx, token)
+				revokeErr = client.RevokeSelf(ctx, token)
 			}
 			_ = bao.DeleteCache(cachePath)
-			return removeToken(tokenPath)
+			if err := removeToken(tokenPath); err != nil {
+				return err
+			}
+			return revokeErr
 		},
 		Login: func(method string) error {
 			// Force the next poll to hit the server as soon as login lands,
@@ -72,6 +80,9 @@ func main() {
 			_ = notify.Send("OpenBao", fmt.Sprintf("Your token expires in less than %s", tray.Human(threshold)))
 		},
 		OpenURL: openURL,
+		Alert: func(title, message string) {
+			_ = notify.Send(title, message)
+		},
 	})
 }
 
