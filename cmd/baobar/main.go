@@ -160,9 +160,17 @@ func runLogin(ctx context.Context, method string, deps loginDeps) error {
 	// Failures go through the same alert seam as logout, rather than
 	// calling notify.Send directly — one path, and an injectable one.
 	if err != nil {
-		if errors.Is(err, authflow.ErrBusy) {
+		var problem *authflow.ConfigProblem
+		switch {
+		case errors.Is(err, authflow.ErrBusy):
 			deps.alert("OpenBao", "A login is already in progress.")
-		} else {
+		case errors.As(err, &problem):
+			// Configuration the user can fix, described by the server itself —
+			// most often a redirect URI the OIDC role does not allow. Anything
+			// else stays generic: a response body from a credential-bearing
+			// request is not something to render into a notification.
+			deps.alert("OpenBao login failed", problem.Error())
+		default:
 			deps.alert("OpenBao", "Login did not complete.")
 		}
 		return err

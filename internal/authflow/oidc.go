@@ -63,8 +63,9 @@ func OIDC(ctx context.Context, cfg OIDCConfig) (string, error) {
 
 	s, err := newSession(cfg.CallbackPort, cfg.Timeout)
 	if err != nil {
-		return "", fmt.Errorf("cannot listen for the OIDC redirect on port %d "+
-			"(it must match the role's allowed redirect URI): %w", cfg.CallbackPort, err)
+		return "", &ConfigProblem{Detail: fmt.Sprintf(
+			"cannot listen on port %d for the login redirect; it must be free, "+
+				"and must match the redirect URI your OIDC role allows", cfg.CallbackPort)}
 	}
 
 	redirectURI := s.baseURL() + "/oidc/callback"
@@ -124,7 +125,10 @@ func (c OIDCConfig) authURL(ctx context.Context, redirectURI, clientNonce string
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("request auth URL: unexpected status %d", resp.StatusCode)
+		// OpenBao names the problem precisely here — an unauthorized redirect
+		// URI, an unknown role — and it is configuration the user can fix, so
+		// it is surfaced rather than flattened to a status code.
+		return "", configProblemFrom(resp)
 	}
 
 	var body struct {
