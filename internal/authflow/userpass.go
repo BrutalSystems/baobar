@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -62,6 +63,14 @@ type authResponse struct {
 // login performs phase one. It returns either a token (no MFA configured) or a
 // challenge (MFA required) — never both.
 func (c UserpassConfig) login(ctx context.Context, username, password string) (string, *mfaChallenge, error) {
+	// The username becomes a path segment. Escaping alone would leave us
+	// depending on OpenBao's router not re-splitting a decoded %2F, so
+	// anything that could change the path is refused outright — the same
+	// posture config.Load takes with mount names.
+	if username == "" || strings.ContainsAny(username, "/\\?#") || strings.ContainsFunc(username, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return "", nil, fmt.Errorf("%w: username contains characters that are not allowed", ErrBadCredentials)
+	}
+
 	body, _ := json.Marshal(map[string]string{"password": password})
 	endpoint := fmt.Sprintf("%s/v1/auth/%s/login/%s", c.Addr, c.Mount, url.PathEscape(username))
 

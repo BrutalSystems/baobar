@@ -59,41 +59,48 @@ func TestUserpassLoginEscapesOrdinaryUsernamesUnchanged(t *testing.T) {
 	}
 }
 
-// A username is free text from a form. Left unescaped, one containing "/"
-// could rewrite the request path onto a different endpoint entirely — e.g.
-// "../../sys/mfa/validate" — sending the password somewhere other than the
-// intended login route. url.PathEscape must keep it confined to a single
-// path segment.
-//
-// r.URL.Path is checked here via EscapedPath()/RawPath rather than the bare
-// Path field: net/url's Path is the *decoded* form (it turns a wire-level
-// "%2F" back into a literal "/"), which would reintroduce exactly the
-// ambiguity being defended against. EscapedPath reflects what was actually
-// sent on the wire, which is what a router makes its decision from.
-func TestUserpassLoginEscapesPathTraversalInUsername(t *testing.T) {
-	var gotPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.EscapedPath()
-		json.NewEncoder(w).Encode(map[string]any{
-			"auth": map[string]any{"client_token": "hvs.tok"},
-		})
-	}))
-	defer srv.Close()
+// A username is free text from a form. url.PathEscape alone would leave the
+// request's safety depending on OpenBao's router not re-splitting a decoded
+// "%2F" back into a path separator — unverified behaviour in someone else's
+// router is not a defence. login must instead refuse outright, client-side,
+// any username that could alter the request path, and it must never even
+// dial the server for one: a rejected password and a rejected username look
+// identical to the caller (ErrBadCredentials), so nothing sensitive escapes
+// this process for a malformed value either.
+func TestUserpassLoginRejectsUnsafeUsernames(t *testing.T) {
+	unsafe := []string{
+		"../../sys/mfa/validate",
+		"a/b",
+		`a\b`,
+		"a?b",
+		"a#b",
+		"a\nb",
+		"",
+	}
+	for _, username := range unsafe {
+		var requests int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests++
+			json.NewEncoder(w).Encode(map[string]any{
+				"auth": map[string]any{"client_token": "hvs.tok"},
+			})
+		}))
 
-	const username = "../../sys/mfa/validate"
-	cfg := UserpassConfig{Addr: srv.URL, Mount: "userpass"}
-	if _, _, err := cfg.login(context.Background(), username, "pw"); err != nil {
-		t.Fatalf("login: %v", err)
-	}
-	if strings.Contains(gotPath, "sys/mfa/validate") {
-		t.Fatalf("path = %s, username traversal was not escaped", gotPath)
-	}
-	want := "/v1/auth/userpass/login/..%2F..%2Fsys%2Fmfa%2Fvalidate"
-	if gotPath != want {
-		t.Fatalf("path = %s, want %s", gotPath, want)
-	}
-	if !strings.HasPrefix(gotPath, "/v1/auth/userpass/login/") {
-		t.Fatalf("path = %s, want prefix /v1/auth/userpass/login/", gotPath)
+		cfg := UserpassConfig{Addr: srv.URL, Mount: "userpass"}
+		token, ch, err := cfg.login(context.Background(), username, "pw")
+		if !errors.Is(err, ErrBadCredentials) {
+			t.Errorf("username %q: err = %v, want ErrBadCredentials", username, err)
+		}
+		if ch != nil {
+			t.Errorf("username %q: challenge = %+v, want nil", username, ch)
+		}
+		if token != "" {
+			t.Errorf("username %q: token = %q, want empty", username, token)
+		}
+		if requests != 0 {
+			t.Errorf("username %q: server received %d requests, want 0 — login must reject before dialing out", username, requests)
+		}
+		srv.Close()
 	}
 }
 
