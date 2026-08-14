@@ -275,6 +275,12 @@ Open the system browser to the authorize URL and listen on `localhost:8250/oidc/
 — the same flow `bao login -method=oidc` performs internally. Exchange the code, write the
 token file.
 
+> **Superseded.** The M2/M3 split below (userpass first, OIDC second) was reordered and
+> merged into a single milestone. See
+> [`2026-08-13-baobar-m2-terminal-free-login-design.md`](2026-08-13-baobar-m2-terminal-free-login-design.md),
+> which also removes the terminal shell-out entirely rather than keeping it as M1's
+> stopgap. The reasoning below is kept for the record.
+
 ### The revisit trigger
 
 If the native-prompt approach in M2 turns out fragile across the three platforms — quoting
