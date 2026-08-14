@@ -58,7 +58,7 @@ func OIDC(ctx context.Context, cfg OIDCConfig) (string, error) {
 	authURL, err := cfg.authURL(ctx, redirectURI, clientNonce)
 	if err != nil {
 		s.finish("", err)
-		s.serve()
+		s.serve(ctx)
 		return "", err
 	}
 
@@ -84,7 +84,7 @@ func OIDC(ctx context.Context, cfg OIDCConfig) (string, error) {
 		s.finish("", fmt.Errorf("open browser: %w", err))
 	}
 
-	return s.serve()
+	return s.serve(ctx)
 }
 
 func (c OIDCConfig) authURL(ctx context.Context, redirectURI, clientNonce string) (string, error) {

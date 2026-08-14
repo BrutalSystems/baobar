@@ -1,6 +1,7 @@
 package authflow
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -19,7 +20,7 @@ func TestSessionBindsLoopbackOnly(t *testing.T) {
 	// serve() is what closes the listener; without it the socket leaks for the
 	// life of the test binary.
 	go s.finish("", nil)
-	defer s.serve()
+	defer s.serve(context.Background())
 
 	if !strings.HasPrefix(s.baseURL(), "http://127.0.0.1:") {
 		t.Errorf("baseURL = %q, want a loopback address", s.baseURL())
@@ -61,7 +62,7 @@ func TestSessionRejectsAForeignHost(t *testing.T) {
 				}
 				s.finish("done", nil)
 			}()
-			s.serve()
+			s.serve(context.Background())
 
 			if reached.Load() {
 				t.Error("handler ran for a request with a foreign Host")
@@ -93,7 +94,7 @@ func TestSessionRejectsRightHostWrongPort(t *testing.T) {
 		}
 		s.finish("done", nil)
 	}()
-	s.serve()
+	s.serve(context.Background())
 
 	if reached.Load() {
 		t.Error("handler ran for a request naming the right host but the wrong port")
@@ -133,7 +134,7 @@ func TestSessionAcceptsOurOwnHost(t *testing.T) {
 					t.Errorf("status = %d, want 200", resp.StatusCode)
 				}
 			}()
-			if _, err := s.serve(); err != nil {
+			if _, err := s.serve(context.Background()); err != nil {
 				t.Fatalf("serve: %v", err)
 			}
 			if !reached.Load() {
@@ -156,7 +157,7 @@ func TestSessionServeReturnsTheFinishedToken(t *testing.T) {
 		http.Get(s.baseURL() + "/done")
 	}()
 
-	token, err := s.serve()
+	token, err := s.serve(context.Background())
 	if err != nil {
 		t.Fatalf("serve: %v", err)
 	}
@@ -173,7 +174,7 @@ func TestSessionServeReturnsTheFinishedError(t *testing.T) {
 	want := errors.New("provider said no")
 	go s.finish("", want)
 
-	if _, err := s.serve(); !errors.Is(err, want) {
+	if _, err := s.serve(context.Background()); !errors.Is(err, want) {
 		t.Fatalf("err = %v, want %v", err, want)
 	}
 }
@@ -187,7 +188,7 @@ func TestSessionTimesOut(t *testing.T) {
 	}
 
 	start := time.Now()
-	if _, err := s.serve(); !errors.Is(err, ErrTimeout) {
+	if _, err := s.serve(context.Background()); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want ErrTimeout", err)
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
@@ -205,7 +206,7 @@ func TestSessionShutsDownOnTimeout(t *testing.T) {
 	}
 	addr := s.ln.Addr().String()
 
-	if _, err := s.serve(); !errors.Is(err, ErrTimeout) {
+	if _, err := s.serve(context.Background()); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want ErrTimeout", err)
 	}
 
@@ -228,7 +229,7 @@ func TestSessionFinishIsIdempotent(t *testing.T) {
 		s.finish("", errors.New("third"))
 	}()
 
-	token, err := s.serve()
+	token, err := s.serve(context.Background())
 	if err != nil || token != "first" {
 		t.Fatalf("got %q, %v — want the first result to win", token, err)
 	}
@@ -249,12 +250,46 @@ func TestSessionFinishIsIdempotentConcurrently(t *testing.T) {
 		go s.finish(fmt.Sprintf("token-%d", i), nil)
 	}
 
-	token, err := s.serve()
+	token, err := s.serve(context.Background())
 	if err != nil {
 		t.Fatalf("serve: %v", err)
 	}
 	if !strings.HasPrefix(token, "token-") {
 		t.Errorf("token = %q, want one of the concurrently-finished values", token)
+	}
+}
+
+// A cancelled context must unblock serve promptly instead of waiting out the
+// rest of the timeout — Task 7 wires these flows to the tray with a context,
+// and a quit or cancel that hangs a goroutine (with a listener still open)
+// for the full timeout is not acceptable. The listener must also actually
+// stop accepting connections once serve returns.
+func TestSessionServeReturnsOnContextCancellation(t *testing.T) {
+	s, err := newSession(0, time.Minute)
+	if err != nil {
+		t.Fatalf("newSession: %v", err)
+	}
+	addr := s.ln.Addr().String()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err = s.serve(ctx)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("serve took %v after cancellation, want it to return promptly", elapsed)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	if err == nil {
+		conn.Close()
+		t.Error("listener still accepting connections after serve() returned on cancellation")
 	}
 }
 

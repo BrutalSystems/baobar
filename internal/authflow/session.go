@@ -130,8 +130,12 @@ func (s *session) finish(token string, err error) {
 	s.once.Do(func() { s.done <- outcome{token: token, err: err} })
 }
 
-// serve runs the listener until finish or timeout, then shuts it down.
-func (s *session) serve() (string, error) {
+// serve runs the listener until finish, ctx is cancelled, or the timeout
+// expires, then shuts it down. A cancelled ctx (e.g. the caller quitting or
+// abandoning the flow) must not leave the listener open for the rest of the
+// timeout — callers that wire this into a longer-lived context depend on a
+// prompt return here.
+func (s *session) serve(ctx context.Context) (string, error) {
 	go s.srv.Serve(s.ln)
 
 	timer := time.NewTimer(s.timeout)
@@ -142,11 +146,13 @@ func (s *session) serve() (string, error) {
 	case out = <-s.done:
 	case <-timer.C:
 		out = outcome{err: ErrTimeout}
+	case <-ctx.Done():
+		out = outcome{err: ctx.Err()}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_ = s.srv.Shutdown(ctx)
+	_ = s.srv.Shutdown(shutdownCtx)
 
 	return out.token, out.err
 }

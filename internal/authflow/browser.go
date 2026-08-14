@@ -105,10 +105,11 @@ func UserpassBrowser(ctx context.Context, cfg UserpassBrowserConfig) (string, er
 		s.finish("", err)
 	}
 
-	return s.serve()
+	return s.serve(ctx)
 }
 
 func render(w http.ResponseWriter, d formData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_ = loginTmpl.Execute(w, d)
 }
