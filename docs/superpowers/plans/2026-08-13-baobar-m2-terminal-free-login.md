@@ -105,7 +105,9 @@ func TestLoadAuthFromEnv(t *testing.T) {
 // Mounts are interpolated into request paths, so anything that could escape a
 // single path segment is rejected at the boundary.
 func TestLoadRejectsUnsafeMounts(t *testing.T) {
-	for _, bad := range []string{"oidc/../sys", "oidc/x", "oi dc", "oidc?x=1", "oidc#f", ""} {
+	// An EMPTY mount is not invalid — it means "use the default" and is
+	// resolved before validation ever sees it. Only malformed values are here.
+	for _, bad := range []string{"oidc/../sys", "oidc/x", "oi dc", "oidc?x=1", "oidc#f", "."} {
 		_, err := Load("", env(map[string]string{
 			"VAULT_ADDR":        "https://bao.example.com",
 			"BAOBAR_OIDC_MOUNT": bad,
@@ -255,10 +257,41 @@ func TestSessionBindsLoopbackOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newSession: %v", err)
 	}
-	defer s.finish("", nil)
+	// serve() is what closes the listener; without it the socket leaks for the
+	// life of the test binary.
+	go s.finish("", nil)
+	defer s.serve()
 
 	if !strings.HasPrefix(s.baseURL(), "http://127.0.0.1:") {
 		t.Errorf("baseURL = %q, want a loopback address", s.baseURL())
+	}
+}
+
+// A request arriving with a foreign Host is either a cross-origin POST or DNS
+// rebinding. These routes take a password; they refuse both.
+func TestSessionRejectsAForeignHost(t *testing.T) {
+	s, err := newSession(0, time.Minute)
+	if err != nil {
+		t.Fatalf("newSession: %v", err)
+	}
+	var reached bool
+	s.handle("/x", func(w http.ResponseWriter, r *http.Request) { reached = true })
+	go func() {
+		req, _ := http.NewRequest(http.MethodGet, s.baseURL()+"/x", nil)
+		req.Host = "evil.example.com"
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			if resp.StatusCode != http.StatusForbidden {
+				t.Errorf("status = %d, want 403", resp.StatusCode)
+			}
+			resp.Body.Close()
+		}
+		s.finish("done", nil)
+	}()
+	s.serve()
+
+	if reached {
+		t.Error("handler ran for a request with a foreign Host")
 	}
 }
 
@@ -408,6 +441,8 @@ import (
 	"time"
 )
 
+// (net is used by both the listener and the Host guard below.)
+
 var (
 	// ErrBusy means another login flow is already running.
 	ErrBusy = errors.New("a login is already in progress")
@@ -460,15 +495,28 @@ func newSession(port int, timeout time.Duration) (*session, error) {
 	return &session{
 		ln:      ln,
 		mux:     mux,
-		srv:     &http.Server{Handler: noStore(mux)},
+		srv:     &http.Server{Handler: guard(ln.Addr().String(), mux)},
 		done:    make(chan outcome, 1),
 		timeout: timeout,
 	}, nil
 }
 
-// noStore keeps every page of a login flow out of caches and histories.
-func noStore(h http.Handler) http.Handler {
+// guard applies the two protections every route of a login flow needs.
+//
+// The Host check matters more than it looks: a remote page cannot READ our
+// responses, but it can drive a cross-origin form POST, and DNS rebinding can
+// point a public hostname at 127.0.0.1. Since these routes accept a password,
+// anything whose Host is not our own loopback address is refused outright.
+func guard(addr string, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(r.Host); err == nil {
+			host = h
+		}
+		if host != "127.0.0.1" && host != "localhost" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		h.ServeHTTP(w, r)
@@ -641,6 +689,37 @@ func TestOIDCProviderError(t *testing.T) {
 		t.Fatal("expected an error when the provider denies access")
 	} else if !strings.Contains(err.Error(), "access_denied") {
 		t.Errorf("err = %v, want it to name the provider's error", err)
+	}
+}
+
+// State is validated by OpenBao, not by us: we forward whatever the provider
+// sent. A mismatch must surface as a failed login rather than a hang or a
+// bogus token.
+func TestOIDCMismatchedStateIsRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/oidc/auth_url"):
+			var body struct {
+				RedirectURI string `json:"redirect_uri"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"auth_url": body.RedirectURI + "?code=abc&state=wrong"},
+			})
+		default: // OpenBao rejects the exchange
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"errors":["state is invalid or expired"]}`))
+		}
+	}))
+	defer srv.Close()
+
+	cfg := OIDCConfig{
+		Addr: srv.URL, Mount: "oidc", CallbackPort: 0, Timeout: 5 * time.Second,
+		OpenURL: func(u string) error { go http.Get(u); return nil },
+	}
+
+	if _, err := OIDC(context.Background(), cfg); err == nil {
+		t.Fatal("expected an error when OpenBao rejects the state")
 	}
 }
 
@@ -985,6 +1064,30 @@ func TestUserpassChallengeFallsBackToMethodName(t *testing.T) {
 	}
 }
 
+// With several enforcements configured, the chosen method must not vary run to
+// run — map iteration order in Go is deliberately randomised.
+func TestUserpassChallengeSelectionIsDeterministic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"auth":{"mfa_requirement":{
+			"mfa_request_id":"req-3",
+			"mfa_constraints":{
+				"b_enforcement":{"any":[{"type":"totp","id":"uuid-b","uses_passcode":true}]},
+				"a_enforcement":{"any":[{"type":"totp","id":"uuid-a","uses_passcode":true}]}}}}}`))
+	}))
+	defer srv.Close()
+
+	cfg := UserpassConfig{Addr: srv.URL, Mount: "userpass"}
+	for i := 0; i < 20; i++ {
+		_, ch, err := cfg.login(context.Background(), "userpass-dev", "pw")
+		if err != nil {
+			t.Fatalf("login: %v", err)
+		}
+		if ch.MethodKey != "uuid-a" {
+			t.Fatalf("run %d picked %q, want uuid-a every time (sorted by enforcement name)", i, ch.MethodKey)
+		}
+	}
+}
+
 func TestUserpassBadPassword(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -1064,6 +1167,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"time"
 )
 
@@ -1152,7 +1256,17 @@ func (c UserpassConfig) login(ctx context.Context, username, password string) (s
 		return "", nil, errors.New("login returned neither a token nor an MFA requirement")
 	}
 
-	for _, constraint := range ar.Auth.MFARequirement.MFAConstraints {
+	// Iterate in sorted order: MFAConstraints is a map, and Go randomises map
+	// iteration, so with more than one enforcement configured an unsorted loop
+	// would pick a different method on different runs.
+	names := make([]string, 0, len(ar.Auth.MFARequirement.MFAConstraints))
+	for name := range ar.Auth.MFARequirement.MFAConstraints {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		constraint := ar.Auth.MFARequirement.MFAConstraints[name]
 		for _, m := range constraint.Any {
 			if !m.UsesPasscode {
 				continue
@@ -1976,15 +2090,108 @@ both items while a flow is live:
 
 Do the same for `m.oidc.ClickedCh` with `o.Login("oidc")`.
 
-- [ ] **Step 3: Update main**
+- [ ] **Step 3: Fix openURL for Windows before wiring anything**
+
+`cmd/baobar/main.go` currently opens a browser on Windows with:
+
+```go
+	case "windows":
+		return exec.Command("cmd", "/c", "start", url).Start()
+```
+
+**This breaks on every OIDC login.** `cmd.exe` re-parses its command line and treats `&`
+as a command separator, and an OIDC `auth_url` always contains `&` between `client_id`,
+`redirect_uri`, `state`, and `nonce`. The browser would open a truncated URL and the login
+would fail — on the platform this entire milestone exists to serve, in the flow least
+likely to be tested from a Mac.
+
+Replace that branch with:
+
+```go
+	case "windows":
+		// rundll32 takes the URL as a single argument and does no shell
+		// parsing, so query strings with & survive. `cmd /c start` does not:
+		// cmd.exe re-parses the line and & terminates the command.
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+```
+
+Add a test in a new `cmd/baobar/main_test.go` proving the argument survives intact:
+
+```go
+package main
+
+import (
+	"strings"
+	"testing"
+)
+
+// An OIDC auth_url always carries & between its query parameters. Whatever
+// command we build must pass it through as ONE argument, unsplit.
+func TestBrowserCommandKeepsQueryStringIntact(t *testing.T) {
+	const raw = "https://idp.example.com/authorize?client_id=abc&state=xyz&nonce=123"
+
+	for _, goos := range []string{"darwin", "windows", "linux"} {
+		name, args := browserCommand(goos, raw)
+		if name == "" {
+			t.Fatalf("%s: no command", goos)
+		}
+		var found bool
+		for _, a := range args {
+			if a == raw {
+				found = true
+			}
+			if strings.Contains(a, "&") && a != raw {
+				t.Errorf("%s: argument %q splits or mangles the URL", goos, a)
+			}
+		}
+		if !found {
+			t.Errorf("%s: the URL is not passed as a single argument: %v", goos, args)
+		}
+	}
+}
+```
+
+To make that testable, extract the command construction from `openURL` exactly as
+`internal/login` did for `goos` in M1:
+
+```go
+// browserCommand returns the command that opens url in the system browser.
+// goos is a parameter so every platform's branch is testable from one machine.
+func browserCommand(goos, url string) (string, []string) {
+	switch goos {
+	case "darwin":
+		return "open", []string{url}
+	case "windows":
+		return "rundll32", []string{"url.dll,FileProtocolHandler", url}
+	default:
+		return "xdg-open", []string{url}
+	}
+}
+
+func openURL(url string) error {
+	name, args := browserCommand(runtime.GOOS, url)
+	return exec.Command(name, args...).Start()
+}
+```
+
+- [ ] **Step 4: Update main**
 
 In `cmd/baobar/main.go`, replace the `login` import with `authflow` and `autostart`, drop
-`CLIAvailable`, and wire the flows:
+`CLIAvailable`, and wire the flows. The import block becomes `context`, `errors`, `fmt`,
+`os`, `os/exec`, `runtime`, `time`, plus `internal/authflow`, `internal/autostart`,
+`internal/bao`, `internal/config`, `internal/notify`, `internal/tray` — `internal/login`
+is gone.
 
 ```go
 	starter, autostartErr := autostart.New()
 
+	// One alert seam, used by logout, by the login flows, and by tray.Options.
+	// M1 had this logic inline in the Options literal; the login flows need it
+	// too, so it gets a name.
+	alert := func(title, message string) { _ = notify.Send(title, message) }
+
 	tray.Run(tray.Options{
+		Alert: alert,
 		Addr:   cfg.Addr,
 		Status: poller.Status,
 		StartAtLoginEnabled: func() bool {
@@ -2022,16 +2229,18 @@ In `cmd/baobar/main.go`, replace the `login` import with `authflow` and `autosta
 					OpenURL:         openURL,
 				})
 			}
+			// Failures go through the same alert seam as logout, rather than
+			// calling notify.Send directly — one path, and an injectable one.
 			if err != nil {
 				if errors.Is(err, authflow.ErrBusy) {
-					notify.Send("OpenBao", "A login is already in progress.")
+					alert("OpenBao", "A login is already in progress.")
 				} else {
-					notify.Send("OpenBao", "Login did not complete.")
+					alert("OpenBao", "Login did not complete.")
 				}
 				return err
 			}
 			if err := bao.WriteToken(tokenPath, token); err != nil {
-				notify.Send("OpenBao", "Signed in, but the token could not be saved.")
+				alert("OpenBao", "Signed in, but the token could not be saved.")
 				return err
 			}
 			poller.Force()
@@ -2044,7 +2253,7 @@ In `cmd/baobar/main.go`, replace the `login` import with `authflow` and `autosta
 Note `poller.Force()` is called here, on the login goroutine. That is the racing call the
 M1 review found — but `Poller`'s throttle state is mutex-guarded now, so it is safe.
 
-- [ ] **Step 4: Verify**
+- [ ] **Step 5: Verify**
 
 ```bash
 gofmt -l .
@@ -2053,10 +2262,11 @@ go test -race ./... -count=1
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o /tmp/baobar.exe ./cmd/baobar
 GOOS=linux GOARCH=amd64 go build -o /tmp/baobar-linux ./cmd/baobar
 grep -rn "bao login\|CLIAvailable\|osascript\|x-terminal-emulator" --include=*.go . || echo "no shell-out remains"
+grep -rn "cmd\", \"/c\", \"start" --include=*.go . || echo "no cmd/c start remains"
 ```
-Expected: all clean; the grep finds nothing.
+Expected: all clean; both greps find nothing.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add -A
@@ -2106,7 +2316,8 @@ git commit -m "docs: browser-based login, start-at-login, and the new settings"
 ## Definition of done for M2
 
 - `go test -race ./...` passes; `go vet ./...` and `gofmt -l .` are clean.
-- No `.go` file references the `bao` CLI, a terminal, `osascript`, or `x-terminal-emulator`.
+- No `.go` file references the `bao` CLI, a terminal, `osascript`, `x-terminal-emulator`,
+  or `cmd /c start` (which mangles OIDC URLs at the first `&`).
 - `internal/login` no longer exists.
 - Windows and Linux binaries cross-compile.
 - Manual, against a live server: SSO login completes in the browser with no terminal and
@@ -2115,3 +2326,6 @@ git commit -m "docs: browser-based login, start-at-login, and the new settings"
   `~/Library/LaunchAgents` plist appears and disappears with the checkbox.
 - The audit-log throttle still holds after a login (the forced poll is one request, not a
   new polling cadence).
+- `browserCommand` passes a URL containing `&` through as a single argument on all three
+  platforms — the Windows case is the one that used to be broken, and it cannot be
+  verified from macOS beyond this unit test.
