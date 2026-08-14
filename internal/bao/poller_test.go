@@ -3,6 +3,7 @@ package bao
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -225,5 +226,73 @@ func TestStatusNonExpiringToken(t *testing.T) {
 	got := p.Status(context.Background())
 	if got.State != StateSignedIn || !got.NeverExpires {
 		t.Errorf("got %+v, want signed-in and NeverExpires", got)
+	}
+}
+
+// A root token is still at the mercy of the network for freshness: if the
+// server can't be reached, "never expires" must not be read as "definitely
+// still valid." Without this, an outage would render a root token as fully
+// signed-in when its cache entry could be arbitrarily old.
+func TestStatusNonExpiringTokenDegradedOnTransportError(t *testing.T) {
+	now := time.Unix(10_000, 0)
+	l := &fakeLookuper{err: errors.New("dial tcp: connection refused")}
+	p, tokenPath, cachePath := newPoller(t, l, now)
+	stamp := writeToken(t, tokenPath, "hvs.root")
+	SaveCache(cachePath, Cache{
+		CheckedAt: 1, NeverExpires: true, Name: "root", Policies: []string{"root"}, Token: stamp,
+	})
+
+	got := p.Status(context.Background())
+	if got.State != StateDegraded {
+		t.Errorf("State = %v, want degraded", got.State)
+	}
+	if !got.NeverExpires {
+		t.Error("NeverExpires = false, want true")
+	}
+}
+
+// The audit-log invariant end to end: the cache the poller itself writes on a
+// cold call must be the cache the very next call finds fresh, with no second
+// server round trip. Every other freshness test hand-builds the Cache outside
+// the poller; this one proves the poller's own SaveCache produces a usable
+// stamp.
+func TestStatusSecondCallUsesTheCacheItJustWrote(t *testing.T) {
+	now := time.Unix(10_000, 0)
+	l := &fakeLookuper{info: Info{
+		ExpiresAt: now.Add(6 * time.Hour), Name: "userpass-dev", Policies: []string{"admin"},
+	}}
+	p, tokenPath, _ := newPoller(t, l, now)
+	writeToken(t, tokenPath, "hvs.abc")
+
+	first := p.Status(context.Background())
+	if l.calls != 1 {
+		t.Fatalf("server called %d times on first Status, want 1", l.calls)
+	}
+
+	second := p.Status(context.Background())
+	if l.calls != 1 {
+		t.Fatalf("server called %d times after a second Status with the same clock, want still 1", l.calls)
+	}
+	if second.State != first.State || second.Remaining != first.Remaining ||
+		second.Name != first.Name || !second.ExpiresAt.Equal(first.ExpiresAt) {
+		t.Errorf("second Status = %+v, want it to match first = %+v", second, first)
+	}
+}
+
+// ErrForbidden must be recognized even when a future client change wraps it,
+// so the check must stay errors.Is, not ==.
+func TestStatusForbiddenClearsCacheWhenWrapped(t *testing.T) {
+	now := time.Unix(10_000, 0)
+	l := &fakeLookuper{err: fmt.Errorf("lookup failed: %w", ErrForbidden)}
+	p, tokenPath, cachePath := newPoller(t, l, now)
+	stamp := writeToken(t, tokenPath, "hvs.revoked")
+	SaveCache(cachePath, Cache{CheckedAt: 1, ExpiresAt: 99_999, Name: "old", Token: stamp})
+
+	got := p.Status(context.Background())
+	if got.State != StateSignedOut {
+		t.Errorf("State = %v, want signed-out", got.State)
+	}
+	if _, ok := LoadCache(cachePath); ok {
+		t.Error("cache survived a wrapped 403")
 	}
 }

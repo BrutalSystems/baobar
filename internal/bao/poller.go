@@ -33,6 +33,11 @@ func (p *Poller) Status(ctx context.Context) Status {
 
 	token, err := ReadToken(p.TokenPath)
 	if err != nil {
+		// Deliberately collapsed: every ReadToken error (missing file, unreadable,
+		// blank contents) means there is no usable token, so the honest readout is
+		// signed-out with the cache cleared. This is not the network path — there
+		// is no "degraded" here because there is nothing to be degraded about; the
+		// user simply cannot authenticate with what's on disk.
 		_ = DeleteCache(p.CachePath)
 		return Status{State: StateSignedOut}
 	}
