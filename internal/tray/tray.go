@@ -8,6 +8,7 @@ import (
 
 	"fyne.io/systray"
 
+	"github.com/brutalsystems/baobar/internal/authflow"
 	"github.com/brutalsystems/baobar/internal/bao"
 )
 
@@ -140,6 +141,12 @@ func onReadyError(o Options) {
 func onReadyNormal(o Options) {
 	h := &holder{}
 	refresh := make(chan struct{}, 1)
+	// loginDone carries only a completion signal, never a value: the login
+	// goroutine that owns a flow uses it to hand re-enabling of the two login
+	// items back to the UI goroutine, since fyne.io/systray's Enable/Disable
+	// are unsynchronized field writes and calling them from the login
+	// goroutine would race with uiLoop calling Disable() on the next click.
+	loginDone := make(chan struct{}, 1)
 
 	systray.SetIcon(Icon(bao.StateSignedOut))
 	systray.SetTitle("🔒 login")
@@ -188,7 +195,7 @@ func onReadyNormal(o Options) {
 		}
 	}()
 
-	go uiLoop(o, h, refresh, menuItems{
+	go uiLoop(o, h, refresh, loginDone, menuItems{
 		addr: mAddr, who: mWho, policies: mPolicies, expires: mExpires,
 		logout: mLogout, userpass: mUserpass, oidc: mOIDC,
 		refresh: mRefresh, startAtLogin: mStartAtLogin, quit: mQuit,
@@ -201,7 +208,7 @@ type menuItems struct {
 	refresh, startAtLogin, quit  *systray.MenuItem
 }
 
-func uiLoop(o Options, h *holder, refreshCh chan struct{}, m menuItems) {
+func uiLoop(o Options, h *holder, refreshCh, loginDone chan struct{}, m menuItems) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 
@@ -314,20 +321,35 @@ func uiLoop(o Options, h *holder, refreshCh chan struct{}, m menuItems) {
 			m.userpass.Disable()
 			m.oidc.Disable()
 			go func() {
-				_ = o.Login("userpass")
-				m.userpass.Enable()
-				m.oidc.Enable()
+				err := o.Login("userpass")
+				// ErrBusy means some other flow — the one that actually holds
+				// authflow's single login slot — is still running. Signalling
+				// completion here would re-enable the items while that other
+				// flow is still in flight, letting a second click start a
+				// third concurrent attempt. Only the goroutine that owns the
+				// running flow gets to signal loginDone.
+				if !errors.Is(err, authflow.ErrBusy) {
+					loginDone <- struct{}{}
+				}
 				kick()
 			}()
 		case <-m.oidc.ClickedCh:
 			m.userpass.Disable()
 			m.oidc.Disable()
 			go func() {
-				_ = o.Login("oidc")
-				m.userpass.Enable()
-				m.oidc.Enable()
+				err := o.Login("oidc")
+				if !errors.Is(err, authflow.ErrBusy) {
+					loginDone <- struct{}{}
+				}
 				kick()
 			}()
+		case <-loginDone:
+			// Re-enabling here, on the UI goroutine, is the point: systray's
+			// Enable/Disable are unsynchronized field writes, so doing this
+			// from the login goroutine above would race with a Disable() call
+			// here on the next click.
+			m.userpass.Enable()
+			m.oidc.Enable()
 		case <-m.refresh.ClickedCh:
 			kick()
 		case <-m.startAtLogin.ClickedCh:
