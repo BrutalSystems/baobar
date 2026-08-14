@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
-	"strings"
+
+	"github.com/brutalsystems/baobar/internal/config"
 )
 
 const (
@@ -23,8 +24,8 @@ func Command(goos, addr, method string) (string, []string, error) {
 	default:
 		return "", nil, fmt.Errorf("unknown login method %q", method)
 	}
-	if strings.ContainsAny(addr, "\"'`$;&|\n\r ") {
-		return "", nil, fmt.Errorf("refusing to shell out with addr %q", addr)
+	if err := config.ValidateAddr(addr); err != nil {
+		return "", nil, fmt.Errorf("refusing to launch a login for %q: %w", addr, err)
 	}
 
 	baoCmd := fmt.Sprintf("bao login -method=%s", method)

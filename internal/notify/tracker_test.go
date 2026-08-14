@@ -63,3 +63,29 @@ func TestTrackerSilentWhenExpired(t *testing.T) {
 		t.Errorf("Crossed at -1m = %v, want none", got)
 	}
 }
+
+// Thresholds passed out of order must be sorted internally (longest first).
+func TestTrackerSortsThresholds(t *testing.T) {
+	tr := NewTracker(5*time.Minute, 30*time.Minute)
+	got := tr.Crossed(2000, 2*time.Minute)
+	if len(got) != 2 || got[0] != 30*time.Minute || got[1] != 5*time.Minute {
+		t.Fatalf("Crossed = %v, want [30m 5m] (descending order)", got)
+	}
+}
+
+// Re-arm must fully reset the fired map, not just clear one threshold.
+func TestTrackerFullResetOnNewToken(t *testing.T) {
+	tr := newTestTracker()
+
+	// Cross both thresholds on token 2000
+	got := tr.Crossed(2000, 2*time.Minute)
+	if len(got) != 2 {
+		t.Fatalf("initial cross = %v, want [30m 5m]", got)
+	}
+
+	// Switch to token 9999 and cross both again; both must fire
+	got = tr.Crossed(9999, 2*time.Minute)
+	if len(got) != 2 || got[0] != 30*time.Minute || got[1] != 5*time.Minute {
+		t.Fatalf("after re-login = %v, want [30m 5m]", got)
+	}
+}

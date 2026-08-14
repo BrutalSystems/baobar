@@ -67,7 +67,7 @@ func Load(path string, getenv func(string) string) (Config, error) {
 		return Config{}, ErrNoAddr
 	}
 	c.Addr = strings.TrimSuffix(c.Addr, "/")
-	if err := validateAddr(c.Addr); err != nil {
+	if err := ValidateAddr(c.Addr); err != nil {
 		return Config{}, err
 	}
 
@@ -92,9 +92,10 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	return c, nil
 }
 
-// validateAddr enforces a strict allowlist for URL components since internal/login
-// interpolates the address into a terminal command.
-func validateAddr(addr string) error {
+// ValidateAddr enforces a strict allowlist for URL components. This is the single
+// validator for any address that may reach a shell, as it is interpolated into
+// terminal commands by internal/login.
+func ValidateAddr(addr string) error {
 	u, err := url.Parse(addr)
 	if err != nil {
 		return fmt.Errorf("parse addr %q: %w", addr, err)

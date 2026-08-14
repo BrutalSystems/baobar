@@ -65,8 +65,34 @@ func TestCommandRejectsUnknownOS(t *testing.T) {
 // config.Load already rejects these, but this is the string that reaches a
 // shell, so it refuses defensively too.
 func TestCommandRejectsUnsafeAddr(t *testing.T) {
-	if _, _, err := Command("darwin", "https://x.com\"; rm -rf ~", MethodUserpass); err == nil {
-		t.Fatal("expected an error for an addr containing shell metacharacters")
+	unsafeAddrs := []string{
+		"https://x.com>out",
+		"https://x.com<in",
+		"https://x.com;id",
+		"https://x.com|id",
+		"https://x.com&id",
+		"https://x.com`id`",
+		"https://x.com$(id)",
+		"https://x.com ext",
+		"https://x.com~root",
+		"https://x.com(sub)",
+		"https://x.com*",
+		"https://x.com\\bad",
+		"https://x.com\"; rm -rf ~",
+	}
+
+	for _, addr := range unsafeAddrs {
+		t.Run(addr, func(t *testing.T) {
+			name, args, err := Command("darwin", addr, MethodUserpass)
+			if err == nil {
+				t.Fatalf("expected an error for addr %q", addr)
+			}
+			// Verify the address does not appear in the command
+			joined := strings.Join(args, " ")
+			if strings.Contains(joined, addr) {
+				t.Errorf("unsafe addr %q appeared in command: %s %s", addr, name, joined)
+			}
+		})
 	}
 }
 
