@@ -140,9 +140,11 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	return c, nil
 }
 
-// ValidateAddr enforces a strict allowlist for URL components. This is the single
-// validator for any address that may reach a shell, as it is interpolated into
-// terminal commands by internal/login.
+// ValidateAddr enforces a strict allowlist for URL components. This is the
+// single validator for the address used to construct every OpenBao request
+// URL — every authflow request and the "open web UI" tray link all build on
+// this Addr, so a malformed or hostile value must be caught here, once,
+// rather than trusted downstream.
 func ValidateAddr(addr string) error {
 	u, err := url.Parse(addr)
 	if err != nil {

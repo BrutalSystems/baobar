@@ -2,6 +2,7 @@ package tray
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -39,8 +40,8 @@ type Options struct {
 
 	// Alert surfaces a failure the menu would otherwise swallow silently —
 	// e.g. a logout whose revoke call never reached the server, or a login
-	// terminal that failed to launch. title/message are short and never
-	// contain a token value.
+	// that failed to complete. title/message are short and never contain a
+	// token value.
 	Alert func(title, message string)
 
 	// PollEvery defaults to one second. This is only how often the poller is
@@ -55,6 +56,39 @@ func (o Options) alert(title, message string) {
 	if o.Alert != nil {
 		o.Alert(title, message)
 	}
+}
+
+// startAtLoginEnabled calls o.StartAtLoginEnabled if the caller set one; a
+// nil field reports "not enabled" instead of panicking the UI goroutine on a
+// click, mirroring alert's nil-safety for a caller that doesn't wire the
+// option (tests, future embedders).
+func (o Options) startAtLoginEnabled() bool {
+	if o.StartAtLoginEnabled == nil {
+		return false
+	}
+	return o.StartAtLoginEnabled()
+}
+
+// toggleStartAtLogin calls o.ToggleStartAtLogin if the caller set one; a nil
+// field reports an error rather than panicking. That keeps the checkbox's
+// honesty property intact even when the option is unset: the subsequent
+// startAtLoginEnabled() re-read still drives what the box shows.
+func (o Options) toggleStartAtLogin(on bool) error {
+	if o.ToggleStartAtLogin == nil {
+		return errors.New("start at login is not supported")
+	}
+	return o.ToggleStartAtLogin(on)
+}
+
+// startAtLoginOutcome decides the post-toggle checkbox state and whether to
+// alert, from ONLY the toggle's error and the freshly re-read on-disk
+// state — never from what the user asked for. A checkbox that shows "on"
+// for a toggle that did not actually happen is worse than no checkbox at
+// all (see StartAtLoginEnabled's doc comment); deriving checked solely from
+// onDisk is what makes that impossible, and is why this is split out as its
+// own pure, directly testable function rather than left inline in uiLoop.
+func startAtLoginOutcome(toggleErr error, onDisk bool) (checked, needsAlert bool) {
+	return onDisk, toggleErr != nil
 }
 
 // holder passes the latest Status from the poll goroutine to the UI goroutine.
@@ -127,17 +161,19 @@ func onReadyNormal(o Options) {
 	systray.AddSeparator()
 	mRefresh := systray.AddMenuItem("Refresh now", "Check the server immediately")
 	mStartAtLogin := systray.AddMenuItemCheckbox("Start at login", "Launch Baobar when you log in",
-		o.StartAtLoginEnabled != nil && o.StartAtLoginEnabled())
+		o.startAtLoginEnabled())
 	mQuit := systray.AddMenuItem("Quit", "Quit Baobar")
 
 	// The poll goroutine is the only caller of o.Status, so a slow or hanging
-	// server cannot block menu clicks. It is also the only caller of
-	// o.Refresh (which forces the poller's next Status call past its
-	// throttle): Poller.Force documents that it must only ever be invoked
-	// from the same goroutine that calls Status, so every other goroutine
-	// that wants a forced recheck — a menu click, or a logout/login attempt
-	// finishing in its own goroutine below — asks for one only by writing to
-	// refresh, never by calling o.Refresh directly.
+	// server cannot block menu clicks. Within this loop, it is also the only
+	// caller of o.Refresh (which forces the poller's next Status call past
+	// its throttle): a menu click or a logout/login attempt finishing in its
+	// own goroutine below asks for one by writing to refresh, so that request
+	// still funnels through the single goroutine that calls Status. That is a
+	// stylistic choice here, not a safety requirement — Poller.Force is
+	// documented as safe to call from any goroutine (its throttle state is
+	// mutex-guarded; see bao.Poller), which is exactly why the login flow in
+	// main.go calls it directly from its own goroutine instead.
 	go func() {
 		ctx := context.Background()
 		t := time.NewTicker(o.PollEvery)
@@ -296,11 +332,12 @@ func uiLoop(o Options, h *holder, refreshCh chan struct{}, m menuItems) {
 			kick()
 		case <-m.startAtLogin.ClickedCh:
 			want := !m.startAtLogin.Checked()
-			if err := o.ToggleStartAtLogin(want); err != nil {
+			toggleErr := o.toggleStartAtLogin(want)
+			checked, needsAlert := startAtLoginOutcome(toggleErr, o.startAtLoginEnabled())
+			if needsAlert {
 				o.alert("Start at login", "Could not change the setting.")
 			}
-			// Reflect what is actually on disk, not what was asked for.
-			if o.StartAtLoginEnabled() {
+			if checked {
 				m.startAtLogin.Check()
 			} else {
 				m.startAtLogin.Uncheck()

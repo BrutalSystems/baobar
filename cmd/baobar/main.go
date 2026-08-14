@@ -93,42 +93,27 @@ func main() {
 		Login: func(method string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
-
-			var token string
-			var err error
-			switch method {
-			case "oidc":
-				token, err = authflow.OIDC(ctx, authflow.OIDCConfig{
+			return runLogin(ctx, method, loginDeps{
+				oidc:     authflow.OIDC,
+				userpass: authflow.UserpassBrowser,
+				oidcConfig: authflow.OIDCConfig{
 					Addr: cfg.Addr, Mount: cfg.OIDCMount, Role: cfg.OIDCRole,
 					CallbackPort: cfg.CallbackPort, OpenURL: openURL,
-				})
-			default:
-				token, err = authflow.UserpassBrowser(ctx, authflow.UserpassBrowserConfig{
+				},
+				userpassConfig: authflow.UserpassBrowserConfig{
 					Userpass:        authflow.UserpassConfig{Addr: cfg.Addr, Mount: cfg.UserpassMount},
 					DefaultUsername: cfg.Username,
 					OpenURL:         openURL,
-				})
-			}
-			// Failures go through the same alert seam as logout, rather than
-			// calling notify.Send directly — one path, and an injectable one.
-			if err != nil {
-				if errors.Is(err, authflow.ErrBusy) {
-					alert("OpenBao", "A login is already in progress.")
-				} else {
-					alert("OpenBao", "Login did not complete.")
-				}
-				return err
-			}
-			if err := bao.WriteToken(tokenPath, token); err != nil {
-				alert("OpenBao", "Signed in, but the token could not be saved.")
-				return err
-			}
-			// No explicit Force here on the poll goroutine's behalf beyond
-			// this call: Poller's throttle state is mutex-guarded, so calling
-			// Force from this login goroutine — rather than only via
-			// tray.go's kick() — is safe (see bao.Poller's doc comment).
-			poller.Force()
-			return nil
+				},
+				writeToken: func(token string) error { return bao.WriteToken(tokenPath, token) },
+				// No explicit Force here on the poll goroutine's behalf
+				// beyond this call: Poller's throttle state is
+				// mutex-guarded, so calling Force from this login goroutine
+				// — rather than only via tray.go's kick() — is safe (see
+				// bao.Poller's doc comment).
+				force: poller.Force,
+				alert: alert,
+			})
 		},
 		Refresh:    func() { poller.Force() },
 		Thresholds: tracker.Crossed,
@@ -138,6 +123,56 @@ func main() {
 		OpenURL: openURL,
 		Alert:   alert,
 	})
+}
+
+// loginDeps carries runLogin's dependencies as injected fields so the login
+// flow — including its two failure alerts and its one success side effect —
+// is reachable from a test without a live OpenBao server, a real browser, or
+// a real autostart/token file. main wires these to authflow.OIDC,
+// authflow.UserpassBrowser, bao.WriteToken, poller.Force, and the shared
+// alert seam; tests wire fakes.
+type loginDeps struct {
+	oidc     func(context.Context, authflow.OIDCConfig) (string, error)
+	userpass func(context.Context, authflow.UserpassBrowserConfig) (string, error)
+
+	oidcConfig     authflow.OIDCConfig
+	userpassConfig authflow.UserpassBrowserConfig
+
+	writeToken func(token string) error
+	force      func()
+	alert      func(title, message string)
+}
+
+// runLogin drives one login attempt: it calls the configured authflow entry
+// point for method, saves the resulting token, and forces a poller refresh.
+// Every failure path alerts exactly once, through deps.alert, and the
+// success path never alerts. writeToken failing does not call force — a
+// token that was not actually saved must not make the tray look fresh.
+func runLogin(ctx context.Context, method string, deps loginDeps) error {
+	var token string
+	var err error
+	switch method {
+	case "oidc":
+		token, err = deps.oidc(ctx, deps.oidcConfig)
+	default:
+		token, err = deps.userpass(ctx, deps.userpassConfig)
+	}
+	// Failures go through the same alert seam as logout, rather than
+	// calling notify.Send directly — one path, and an injectable one.
+	if err != nil {
+		if errors.Is(err, authflow.ErrBusy) {
+			deps.alert("OpenBao", "A login is already in progress.")
+		} else {
+			deps.alert("OpenBao", "Login did not complete.")
+		}
+		return err
+	}
+	if err := deps.writeToken(token); err != nil {
+		deps.alert("OpenBao", "Signed in, but the token could not be saved.")
+		return err
+	}
+	deps.force()
+	return nil
 }
 
 // browserCommand returns the command that opens url in the system browser.
