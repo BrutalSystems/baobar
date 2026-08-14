@@ -105,7 +105,7 @@ baobar/
   cmd/baobar/main.go        wiring only: config -> poller -> tray
   internal/bao/             token state machine, API client, cache      (no UI, no CLI)
   internal/tray/            icon + menu rendering, click wiring
-  internal/login/           auth flows; writes ~/.vault-token
+  internal/authflow/        auth flows; writes ~/.vault-token (renamed from internal/login/ during M2 — see the M2 design doc)
   internal/config/          VAULT_ADDR, intervals, thresholds
   internal/notify/          desktop notifications (e.g. gen2brain/beeep)
 ```
