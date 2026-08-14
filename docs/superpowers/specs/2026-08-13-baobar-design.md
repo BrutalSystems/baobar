@@ -1,6 +1,9 @@
 # Baobar — design
 
-**Status:** approved, not yet implemented. Nothing in this repo is built.
+**Status:** M1 implemented on branch `m1-indicator` — all packages unit-tested, and the app
+has been run once on macOS against a live server (the indicator, the countdown, and the
+audit-log throttle were confirmed working; the remaining manual checks are outstanding).
+M2 and M3 are not started. See the README for exactly what is and is not verified.
 **Date:** 2026-08-13
 
 A cross-platform menu bar / system tray app that shows whether you are signed in to
@@ -114,9 +117,9 @@ the UI; conflating them is how the script's successor would regress.
 
 | State | Meaning | Indicator |
 |---|---|---|
-| `SignedIn` | valid token, >30m left | 🔓 `6h19m` |
-| `Expiring` | valid token, ≤30m left | 🟠 `22m` |
-| `SignedOut` | no token file, or expired, or 403 from the server | 🔒 `login` |
+| `SignedIn` | valid token, >30m left | green icon + `6h19m` |
+| `Expiring` | valid token, ≤30m left | amber icon + `22m` |
+| `SignedOut` | no token file, or expired, or 403 from the server | red icon + `login` |
 | `Degraded` | server unreachable; counting down from cache | dimmed icon + countdown |
 
 `Degraded` is not a cosmetic nicety. A network blip must never render as "logged out" —
@@ -239,7 +242,7 @@ it solves *knowing*, not *acting*. M2 solves acting.
 Menu layout, ported from the prototype:
 
 ```
-🔓 6h19m
+[green icon] 6h19m
 ---
 https://bao.example.com          -> opens /ui
 Signed in as userpass-dev

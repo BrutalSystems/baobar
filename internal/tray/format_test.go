@@ -34,12 +34,13 @@ func TestLabel(t *testing.T) {
 		in   bao.Status
 		want string
 	}{
-		{"signed in", bao.Status{State: bao.StateSignedIn, Remaining: 6*time.Hour + 19*time.Minute}, "🔓 6h19m"},
-		{"expiring", bao.Status{State: bao.StateExpiring, Remaining: 22 * time.Minute}, "🟠 22m"},
-		{"signed out", bao.Status{State: bao.StateSignedOut}, "🔒 login"},
-		{"degraded with a cached countdown", bao.Status{State: bao.StateDegraded, Remaining: 6 * time.Hour}, "🌐 6h00m"},
-		{"degraded with nothing cached", bao.Status{State: bao.StateDegraded}, "🌐 ?"},
-		{"non-expiring", bao.Status{State: bao.StateSignedIn, NeverExpires: true}, "🔓 ∞"},
+		{"signed in", bao.Status{State: bao.StateSignedIn, Remaining: 6*time.Hour + 19*time.Minute}, "6h19m"},
+		{"expiring", bao.Status{State: bao.StateExpiring, Remaining: 22 * time.Minute}, "22m"},
+		{"signed out", bao.Status{State: bao.StateSignedOut}, "login"},
+		{"degraded with a cached countdown", bao.Status{State: bao.StateDegraded, Remaining: 6 * time.Hour}, "~6h00m"},
+		{"degraded with nothing cached", bao.Status{State: bao.StateDegraded}, "?"},
+		{"non-expiring", bao.Status{State: bao.StateSignedIn, NeverExpires: true}, "∞"},
+		{"degraded and non-expiring", bao.Status{State: bao.StateDegraded, NeverExpires: true}, "~∞"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -47,6 +48,36 @@ func TestLabel(t *testing.T) {
 				t.Errorf("Label() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// The label must carry no state emoji: Icon() is the state signal, and on macOS
+// both render, which put the state on screen twice. Observed on a real menu bar.
+func TestLabelCarriesNoStateEmoji(t *testing.T) {
+	states := []bao.Status{
+		{State: bao.StateSignedIn, Remaining: time.Hour},
+		{State: bao.StateExpiring, Remaining: 22 * time.Minute},
+		{State: bao.StateSignedOut},
+		{State: bao.StateDegraded, Remaining: time.Hour},
+		{State: bao.StateDegraded},
+		{State: bao.StateSignedIn, NeverExpires: true},
+	}
+	for _, emoji := range []string{"🔓", "🟠", "🔒", "🌐", "⚠️"} {
+		for _, s := range states {
+			if got := Label(s); strings.Contains(got, emoji) {
+				t.Errorf("Label(%v) = %q, must not contain the state emoji %q", s.State, got, emoji)
+			}
+		}
+	}
+}
+
+// Degraded must stay distinguishable from signed-in in TEXT, not by icon colour
+// alone — the icons differ only by hue, which excludes colourblind users.
+func TestDegradedIsDistinguishableWithoutColour(t *testing.T) {
+	signedIn := Label(bao.Status{State: bao.StateSignedIn, Remaining: 6 * time.Hour})
+	degraded := Label(bao.Status{State: bao.StateDegraded, Remaining: 6 * time.Hour})
+	if signedIn == degraded {
+		t.Errorf("signed-in and degraded both render as %q; the state would be visible only as icon colour", signedIn)
 	}
 }
 

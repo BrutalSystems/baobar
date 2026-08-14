@@ -5,10 +5,10 @@ are signed in and how long your token has left, everywhere a shell-script plugin
 (Windows has no menu-bar-script host). macOS, Windows, and Linux.
 
 ```
-🔓 6h19m          signed in, 6h19m remaining
-🟠 22m            under 30 minutes left (expiry warning)
-🔒 login          not signed in
-🌐 6h19m          server unreachable, counting down from the last known session
+[green]  6h19m     signed in, 6h19m remaining
+[amber]  22m       under 30 minutes left (expiry warning)
+[red]    login     not signed in
+[grey]   ~6h19m    server unreachable, counting down from the last known session
 ```
 
 In M1, logging back in still opens a terminal running `bao login` — see
@@ -28,23 +28,29 @@ deliberate exception: it forces the very next check past the throttle. See
 
 M1 is code-complete: all five internal packages (`bao`, `config`, `notify`, `login`,
 `tray`) are implemented and unit-tested, and `go build` / `go vet` / `go test -race` are
-clean on macOS. What is **outstanding** is end-to-end verification against a live OpenBao
-server — the app has not yet been run against a real server, the thirteen manual checks in
-the M1 plan (signed-out/signed-in states, the countdown, the audit-log request-count
-invariant, offline/degraded behavior, logout, both login flows, the warning notification,
+clean on macOS.
+
+**Verified by running it on macOS against a live OpenBao server** (one session):
+the tray item appears, the `Expiring` state renders correctly with its countdown, the menu
+shows identity/policies/expiry, and the audit-log throttle holds — over 100 seconds of
+runtime the cached `checked_at` never moved while the countdown kept ticking, i.e. one
+server request, not one per second.
+
+**Outstanding:** the remaining manual checks from the M1 plan — signed-out and signed-in
+transitions, offline/degraded behavior, logout, both login flows, the warning notification,
 the misconfiguration path, menu responsiveness under a hung server, re-login pickup, and
-behavior with no `bao` CLI on `PATH`) have not been performed, and the Windows and Linux
-builds have not been run on their target platforms. See [Build matrix](#build-matrix) for
-exactly which platforms have and have not been exercised.
+behavior with no `bao` CLI on `PATH`. The Windows and Linux binaries compile but have never
+been run on their target platforms. See [Build matrix](#build-matrix) for exactly which
+platforms have and have not been exercised.
 
 ## State table
 
 | State | Icon | Menu bar label | Meaning |
 |---|---|---|---|
-| Signed out | grey lock | `🔒 login` | no usable token on disk, or the server rejected it |
-| Signed in | green unlock | `🔓 <countdown>` | token valid, more than the warning window left |
-| Expiring | amber | `🟠 <countdown>` | inside the warning window (`BAOBAR_WARN`, default 30m); fires one desktop notification per threshold |
-| Degraded | grey globe | `🌐 <countdown or ?>` | server unreachable; counting down from the cached expiry rather than declaring you signed out |
+| Signed out | red circle | `login` | no usable token on disk, or the server rejected it |
+| Signed in | green circle | `<countdown>` | token valid, more than the warning window left |
+| Expiring | amber circle | `<countdown>` | inside the warning window (`BAOBAR_WARN`, default 30m); fires one desktop notification per threshold |
+| Degraded | grey circle | `~<countdown>` or `?` | server unreachable; counting down from the cached expiry rather than declaring you signed out |
 
 On Windows the menu bar carries no text (`SetTitle` is a no-op there — see
 [Platform notes](#platform-notes)), so the tooltip is the primary readout: it spells out

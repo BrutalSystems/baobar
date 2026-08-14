@@ -24,25 +24,34 @@ func Human(d time.Duration) string {
 }
 
 // Label is the menu bar text. macOS and Linux only — Windows shows no title.
+//
+// It carries NO state emoji. An earlier version prefixed one (🔓/🟠/🔒/🌐), which
+// was inherited from the shell prototype that had no icon to work with. Once
+// Icon() existed for Windows' sake, macOS rendered both and the state appeared
+// twice side by side. The icon is the state signal; this is just the number.
+//
+// Degraded is marked with a "~" prefix rather than a colour, so "we cannot
+// currently confirm this" survives for anyone who cannot distinguish the grey
+// icon from the green one.
 func Label(s bao.Status) string {
 	switch s.State {
 	case bao.StateSignedIn:
 		if s.NeverExpires {
-			return "🔓 ∞"
+			return "∞"
 		}
-		return "🔓 " + Human(s.Remaining)
+		return Human(s.Remaining)
 	case bao.StateExpiring:
-		return "🟠 " + Human(s.Remaining)
+		return Human(s.Remaining)
 	case bao.StateDegraded:
 		if s.NeverExpires {
-			return "🌐 ∞"
+			return "~∞"
 		}
 		if s.Remaining <= 0 {
-			return "🌐 ?"
+			return "?"
 		}
-		return "🌐 " + Human(s.Remaining)
+		return "~" + Human(s.Remaining)
 	default:
-		return "🔒 login"
+		return "login"
 	}
 }
 
