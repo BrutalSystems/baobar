@@ -91,6 +91,19 @@ Both login items open your default browser instead of a terminal. Baobar never i
 Either flow writes the resulting token to `~/.vault-token` on success, exactly as a
 successful `bao login` would, and the tray picks it up on its next refresh.
 
+**Why the OIDC callback route has no nonce, unlike the userpass form.** The userpass
+form's path is unguessable on purpose (a random nonce), but the OIDC callback path is
+`/oidc/callback` — fixed and effectively public, because the redirect URI registered with
+the identity provider has to name a specific path and port. That is a deliberate,
+bounded gap, not an oversight: another local process that guesses the callback path and
+sends a request to it can only ever abort an in-progress login (by racing OpenBao's real
+redirect and getting rejected, or by tripping `guard`'s Host check) — it cannot obtain a
+token. Completing the flow requires `client_nonce`, which is generated in-process, sent to
+OpenBao over the authenticated `auth_url` request, and never written anywhere a local
+attacker could read it before the legitimate callback arrives; OpenBao binds `state` to
+that nonce server-side, so a forged callback with a guessed or replayed `state` fails the
+exchange rather than returning a token.
+
 ## Install
 
 Build from source for now — no releases, signing, or package manager yet:
