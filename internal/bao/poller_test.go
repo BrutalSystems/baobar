@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -467,6 +468,73 @@ func TestForceCausesOneImmediateCallThenRethrottles(t *testing.T) {
 	if l.calls != 2 {
 		t.Errorf("server called %d times while re-throttled after Force, want still 2", l.calls)
 	}
+}
+
+// Force is documented as safe to call from any goroutine — a menu click, or
+// a logout/login attempt completing on its own goroutine — concurrently with
+// the poll goroutine's Status calls. This hammers exactly that: one goroutine
+// calling Status in a tight loop (standing in for the poll goroutine) while
+// several others call Force concurrently (standing in for menu clicks). It
+// asserts nothing about counts — the point is purely that `go test -race`
+// reports no data race on Poller's throttle fields. Verified to actually
+// catch the bug it guards: run under -race against a Poller with the mutex
+// removed (reverting to the single-goroutine-only version), this test failed
+// with "WARNING: DATA RACE" pointing at Status's read and Force's write of
+// forceNext, before the mutex was restored. See the fix-wave report for the
+// captured output.
+func TestForceIsRaceSafeAgainstConcurrentStatus(t *testing.T) {
+	now := time.Unix(10_000, 0)
+	l := &fakeLookuper{info: Info{ExpiresAt: now.Add(6 * time.Hour), Name: "userpass-dev"}}
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, ".vault-token")
+	p := &Poller{
+		Client:    l,
+		TokenPath: tokenPath,
+		CachePath: filepath.Join(dir, "status.json"),
+		Recheck:   300 * time.Second,
+		Warn:      30 * time.Minute,
+		Now:       func() time.Time { return now },
+	}
+	writeToken(t, tokenPath, "hvs.abc")
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// The poll goroutine: calls Status back to back until told to stop.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				p.Status(context.Background())
+			}
+		}
+	}()
+
+	// Several goroutines standing in for menu clicks / a completed
+	// logout-login goroutine, all calling Force concurrently with the
+	// Status loop above.
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					p.Force()
+				}
+			}
+		}()
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	close(stop)
+	wg.Wait()
 }
 
 // ErrForbidden must be recognized even when a future client change wraps it,

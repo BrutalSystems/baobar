@@ -67,11 +67,10 @@ func main() {
 			return revokeErr
 		},
 		Login: func(method string) error {
-			// Force the next poll to hit the server as soon as login lands,
-			// without discarding the cache: deleting it here would blow away
-			// the only thing keeping a Degraded countdown alive if the server
-			// is unreachable when the poll fires.
-			poller.Force()
+			// No explicit Force here: tray.go's kick() after this returns
+			// already signals the poll goroutine's refresh channel, and it
+			// is the poll goroutine itself that calls Force (see tray.go) —
+			// calling it from this goroutine instead would race Status.
 			return login.Launch(cfg.Addr, method)
 		},
 		Refresh:    func() { poller.Force() },
