@@ -130,8 +130,10 @@ func (p *Poller) Status(ctx context.Context) Status {
 
 	case err != nil:
 		// Transport failure. The token is probably still fine — keep counting
-		// down from cache and show degraded rather than crying logout.
-		if c, ok := LoadCache(p.CachePath); ok {
+		// down from cache and show degraded rather than crying logout. The
+		// entry must still be OUR server's: falling back to another server's
+		// session would misreport the identity, just with a dimmed icon.
+		if c, ok := LoadCache(p.CachePath); ok && c.Addr == p.Addr {
 			return p.recordStatus(p.statusFrom(c, now, false))
 		}
 		return p.recordStatus(Status{State: StateDegraded})
