@@ -279,6 +279,196 @@ func TestStatusSecondCallUsesTheCacheItJustWrote(t *testing.T) {
 	}
 }
 
+// --- The audit-log throttle (fix wave item 1) -----------------------------
+//
+// These prove the throttle is TIME-based and unconditional: it holds even
+// when there is never a usable cache to serve from, which is exactly the
+// case the old ("cache exists and is fresh") throttle failed to cover. Each
+// test drives a simulated clock one second at a time for 600 ticks — ten
+// simulated minutes against the default 300s Recheck — and asserts the
+// server was called at most twice: once to discover the failure, once more
+// when the Recheck window elapses at the 300s mark. Without the fix, each of
+// these scenarios calls the server on every one of the 600 ticks.
+
+// tickingPoller returns a Poller wired to a clock the test can advance
+// independently of wall time, plus a function to advance it by one second.
+func tickingPoller(t *testing.T, l Lookuper, cachePath string) (*Poller, string, func()) {
+	t.Helper()
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, ".vault-token")
+	if cachePath == "" {
+		cachePath = filepath.Join(dir, "status.json")
+	}
+	now := time.Unix(10_000, 0)
+	p := &Poller{
+		Client:    l,
+		TokenPath: tokenPath,
+		CachePath: cachePath,
+		Recheck:   300 * time.Second,
+		Warn:      30 * time.Minute,
+		Now:       func() time.Time { return now },
+	}
+	tick := func() { now = now.Add(time.Second) }
+	return p, tokenPath, tick
+}
+
+// runTicks calls Status once per simulated second for 600 seconds (t=0..599),
+// so the 300s Recheck boundary is crossed exactly once.
+func runTicks(p *Poller, tick func()) {
+	for i := 0; i < 600; i++ {
+		p.Status(context.Background())
+		tick()
+	}
+}
+
+func TestThrottleHoldsForExpiredTokenReturningForbidden(t *testing.T) {
+	l := &fakeLookuper{err: ErrForbidden}
+	p, tokenPath, tick := tickingPoller(t, l, "")
+	writeToken(t, tokenPath, "hvs.expired")
+
+	runTicks(p, tick)
+
+	if l.calls > 2 {
+		t.Errorf("server called %d times over 600 ticks, want at most 2", l.calls)
+	}
+}
+
+func TestThrottleHoldsWhenSaveCacheFails(t *testing.T) {
+	dir := t.TempDir()
+	noWrite := filepath.Join(dir, "nowrite")
+	if err := os.Mkdir(noWrite, 0o500); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(noWrite, 0o700) }) // let TempDir clean up
+
+	l := &fakeLookuper{info: Info{ExpiresAt: time.Unix(10_000, 0).Add(6 * time.Hour), Name: "userpass-dev"}}
+	p, tokenPath, tick := tickingPoller(t, l, filepath.Join(noWrite, "status.json"))
+	writeToken(t, tokenPath, "hvs.abc")
+
+	// Confirm the premise: the cache path really is unwritable.
+	if err := SaveCache(p.CachePath, Cache{}); err == nil {
+		t.Fatal("test setup: SaveCache unexpectedly succeeded against a read-only directory")
+	}
+
+	runTicks(p, tick)
+
+	if l.calls > 2 {
+		t.Errorf("server called %d times over 600 ticks with a failing SaveCache, want at most 2", l.calls)
+	}
+}
+
+func TestThrottleHoldsForTransportErrorWithNoCache(t *testing.T) {
+	l := &fakeLookuper{err: errors.New("dial tcp: connection refused")}
+	p, tokenPath, tick := tickingPoller(t, l, "")
+	writeToken(t, tokenPath, "hvs.abc")
+
+	runTicks(p, tick)
+
+	if l.calls > 2 {
+		t.Errorf("server called %d times over 600 ticks, want at most 2", l.calls)
+	}
+}
+
+// Regression guard: the healthy path must stay just as quiet as the failing
+// ones now do.
+func TestThrottleHoldsForHealthySignedIn(t *testing.T) {
+	l := &fakeLookuper{info: Info{ExpiresAt: time.Unix(10_000, 0).Add(6 * time.Hour), Name: "userpass-dev"}}
+	p, tokenPath, tick := tickingPoller(t, l, "")
+	writeToken(t, tokenPath, "hvs.abc")
+
+	runTicks(p, tick)
+
+	if l.calls > 2 {
+		t.Errorf("server called %d times over 600 ticks while healthy, want at most 2", l.calls)
+	}
+}
+
+// A token file that changes mid-window (a terminal re-login) must force an
+// immediate call even though the Recheck window has not elapsed.
+func TestThrottleForcesImmediateCallWhenStampChanges(t *testing.T) {
+	l := &fakeLookuper{info: Info{ExpiresAt: time.Unix(10_000, 0).Add(6 * time.Hour), Name: "userpass-dev"}}
+	p, tokenPath, tick := tickingPoller(t, l, "")
+	writeToken(t, tokenPath, "hvs.old")
+
+	p.Status(context.Background())
+	if l.calls != 1 {
+		t.Fatalf("server called %d times on the first call, want 1", l.calls)
+	}
+
+	// Advance ten seconds — well inside the 300s window — with no change.
+	for i := 0; i < 10; i++ {
+		tick()
+		p.Status(context.Background())
+	}
+	if l.calls != 1 {
+		t.Fatalf("server called %d times inside the window with no change, want still 1", l.calls)
+	}
+
+	// A different-length token guarantees a different stamp regardless of
+	// mtime resolution.
+	writeToken(t, tokenPath, "hvs.freshly-issued-and-much-longer-than-before")
+	tick()
+	got := p.Status(context.Background())
+	if l.calls != 2 {
+		t.Fatalf("server called %d times after the token file changed mid-window, want 2 (immediate)", l.calls)
+	}
+	if got.State == StateDegraded {
+		t.Errorf("State = %v after a successful re-login lookup, want a live state", got.State)
+	}
+
+	// And it re-throttles from there: a few more ticks with no further change
+	// must not call again.
+	for i := 0; i < 10; i++ {
+		tick()
+		p.Status(context.Background())
+	}
+	if l.calls != 2 {
+		t.Errorf("server called %d times after re-throttling, want still 2", l.calls)
+	}
+}
+
+// Force must cause exactly one immediate extra call, then re-throttle.
+func TestForceCausesOneImmediateCallThenRethrottles(t *testing.T) {
+	l := &fakeLookuper{info: Info{ExpiresAt: time.Unix(10_000, 0).Add(6 * time.Hour), Name: "userpass-dev"}}
+	p, tokenPath, tick := tickingPoller(t, l, "")
+	writeToken(t, tokenPath, "hvs.abc")
+
+	p.Status(context.Background())
+	if l.calls != 1 {
+		t.Fatalf("server called %d times on the first call, want 1", l.calls)
+	}
+
+	for i := 0; i < 5; i++ {
+		tick()
+		p.Status(context.Background())
+	}
+	if l.calls != 1 {
+		t.Fatalf("server called %d times before Force, want still 1", l.calls)
+	}
+
+	p.Force()
+	tick()
+	p.Status(context.Background())
+	if l.calls != 2 {
+		t.Fatalf("server called %d times right after Force, want 2", l.calls)
+	}
+
+	// A second immediate call must NOT call again: Force is one-shot.
+	tick()
+	p.Status(context.Background())
+	if l.calls != 2 {
+		t.Errorf("server called %d times on the call after Force, want still 2 (Force is one-shot)", l.calls)
+	}
+
+	for i := 0; i < 10; i++ {
+		tick()
+		p.Status(context.Background())
+	}
+	if l.calls != 2 {
+		t.Errorf("server called %d times while re-throttled after Force, want still 2", l.calls)
+	}
+}
+
 // ErrForbidden must be recognized even when a future client change wraps it,
 // so the check must stay errors.Is, not ==.
 func TestStatusForbiddenClearsCacheWhenWrapped(t *testing.T) {
