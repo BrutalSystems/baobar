@@ -160,11 +160,20 @@ were verified against the systray source:
   nothing else. The countdown therefore reaches Windows users through `SetTooltip` plus a
   color-coded icon, and **every state must be distinguishable by icon alone** — which
   promotes icon work from open question 4 to an M1 requirement.
-- **Linux cannot be cross-compiled from macOS.** It needs `CGO_ENABLED=1` plus `gcc`,
-  `libgtk-3-dev`, and `libayatana-appindicator3-dev`. Windows *can* be cross-compiled
-  (pure-Go syscalls, `CGO_ENABLED=0`) and wants `-ldflags "-H=windowsgui"` to suppress a
-  console window. So: macOS builds locally, Windows cross-builds, Linux needs a Linux box
-  or CI.
+- **~~Linux cannot be cross-compiled from macOS.~~ CORRECTED 2026-08-13 during M1.** This
+  claim was wrong. It came from the `getlantern/systray` README, which does require
+  `CGO_ENABLED=1` plus `gcc`, `libgtk-3-dev`, and `libayatana-appindicator3-dev`. The fork
+  actually used here, `fyne.io/systray` v1.12.2, implements Linux in **pure Go over D-Bus**
+  (`StatusNotifierItem`, via `godbus/dbus/v5`); only the darwin files use cgo. Verified
+  against the module source: `GOOS=linux go build` succeeds from macOS with no cgo and no
+  system headers. Windows likewise cross-builds (pure-Go syscalls, `CGO_ENABLED=0`) and
+  wants `-ldflags "-H=windowsgui"` to suppress a console window.
+
+  What remains true is narrower and worth keeping: a Linux binary *building* is not the
+  same as the tray *appearing*. The D-Bus path needs a session bus and a
+  StatusNotifierItem-capable desktop, so a real Linux desktop run is still unverified. If a
+  future systray version reintroduces a cgo path, the `apt-get` line above becomes relevant
+  again.
 
 ### Two consequences for the core
 
