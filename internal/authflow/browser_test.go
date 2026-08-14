@@ -3,6 +3,7 @@ package authflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -389,4 +390,32 @@ func TestUserpassBrowserEscapesUsernameInReRender(t *testing.T) {
 
 	UserpassBrowser(context.Background(), cfg)
 	<-done
+}
+
+// Task 7 is the first real caller of (*session).serve with a cancellable
+// context, and it drives that cancellation through the public entry point,
+// not serve() directly. A cancelled context must unblock UserpassBrowser
+// promptly rather than waiting out cfg.Timeout, since the tray wires a
+// cancel into a login goroutine it may need to abandon.
+func TestUserpassBrowserReturnsPromptlyOnContextCancellation(t *testing.T) {
+	cfg := UserpassBrowserConfig{
+		Userpass: UserpassConfig{Addr: "http://127.0.0.1:0", Mount: "userpass"},
+		Timeout:  time.Minute,
+		OpenURL:  func(string) error { return nil },
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := UserpassBrowser(ctx, cfg)
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Errorf("UserpassBrowser took %v after cancellation, want well under the 1-minute timeout", elapsed)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
 }

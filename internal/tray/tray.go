@@ -19,11 +19,6 @@ type Options struct {
 	// invisible — and "no VAULT_ADDR yet" is the most likely first-run state.
 	ConfigError string
 
-	// CLIAvailable reports whether `bao` is on PATH. M1's login shells out to
-	// it; when it is missing the login items say so instead of opening a
-	// console that fails.
-	CLIAvailable bool
-
 	// Status may block on the network. It is called ONLY from the poll
 	// goroutine — never from the goroutine servicing menu clicks, or the menu
 	// freezes for the duration of every server check.
@@ -34,6 +29,13 @@ type Options struct {
 	Thresholds func(tokenKey int64, remaining time.Duration) []time.Duration
 	Notify     func(threshold time.Duration)
 	OpenURL    func(string) error
+
+	// StartAtLoginEnabled reports the real on-disk state, re-read after every
+	// toggle. ToggleStartAtLogin returns an error if the change did not happen,
+	// so the checkbox can stay honest rather than claiming a state it failed to
+	// reach.
+	StartAtLoginEnabled func() bool
+	ToggleStartAtLogin  func(on bool) error
 
 	// Alert surfaces a failure the menu would otherwise swallow silently —
 	// e.g. a logout whose revoke call never reached the server, or a login
@@ -120,21 +122,13 @@ func onReadyNormal(o Options) {
 	systray.AddSeparator()
 	mLogout := systray.AddMenuItem("Log out (revoke token)", "Revoke this token on the server")
 	systray.AddSeparator()
-	mUserpass := systray.AddMenuItem("Login with password + TOTP", "Opens a terminal")
-	mOIDC := systray.AddMenuItem("Login with SSO", "Opens a terminal")
+	mUserpass := systray.AddMenuItem("Login with password + TOTP", "Opens a browser tab")
+	mOIDC := systray.AddMenuItem("Login with SSO", "Opens a browser tab")
 	systray.AddSeparator()
 	mRefresh := systray.AddMenuItem("Refresh now", "Check the server immediately")
+	mStartAtLogin := systray.AddMenuItemCheckbox("Start at login", "Launch Baobar when you log in",
+		o.StartAtLoginEnabled != nil && o.StartAtLoginEnabled())
 	mQuit := systray.AddMenuItem("Quit", "Quit Baobar")
-
-	// Without the CLI, M1 cannot log in at all. Say so once, here, rather than
-	// letting the buttons open a console that prints "bao: command not found".
-	if !o.CLIAvailable {
-		for _, m := range []*systray.MenuItem{mUserpass, mOIDC} {
-			m.Disable()
-		}
-		mUserpass.SetTitle("Login needs the bao CLI (not installed)")
-		mOIDC.SetTitle("Use the web UI above to sign in")
-	}
 
 	// The poll goroutine is the only caller of o.Status, so a slow or hanging
 	// server cannot block menu clicks. It is also the only caller of
@@ -161,14 +155,14 @@ func onReadyNormal(o Options) {
 	go uiLoop(o, h, refresh, menuItems{
 		addr: mAddr, who: mWho, policies: mPolicies, expires: mExpires,
 		logout: mLogout, userpass: mUserpass, oidc: mOIDC,
-		refresh: mRefresh, quit: mQuit,
+		refresh: mRefresh, startAtLogin: mStartAtLogin, quit: mQuit,
 	})
 }
 
 type menuItems struct {
 	addr, who, policies, expires *systray.MenuItem
 	logout, userpass, oidc       *systray.MenuItem
-	refresh, quit                *systray.MenuItem
+	refresh, startAtLogin, quit  *systray.MenuItem
 }
 
 func uiLoop(o Options, h *holder, refreshCh chan struct{}, m menuItems) {
@@ -281,23 +275,36 @@ func uiLoop(o Options, h *holder, refreshCh chan struct{}, m menuItems) {
 				kick()
 			}()
 		case <-m.userpass.ClickedCh:
+			m.userpass.Disable()
+			m.oidc.Disable()
 			go func() {
-				if err := o.Login("userpass"); err != nil {
-					o.alert("Could not start login",
-						"The terminal could not be started. Use the web UI link above to sign in instead.")
-				}
+				_ = o.Login("userpass")
+				m.userpass.Enable()
+				m.oidc.Enable()
 				kick()
 			}()
 		case <-m.oidc.ClickedCh:
+			m.userpass.Disable()
+			m.oidc.Disable()
 			go func() {
-				if err := o.Login("oidc"); err != nil {
-					o.alert("Could not start login",
-						"The terminal could not be started. Use the web UI link above to sign in instead.")
-				}
+				_ = o.Login("oidc")
+				m.userpass.Enable()
+				m.oidc.Enable()
 				kick()
 			}()
 		case <-m.refresh.ClickedCh:
 			kick()
+		case <-m.startAtLogin.ClickedCh:
+			want := !m.startAtLogin.Checked()
+			if err := o.ToggleStartAtLogin(want); err != nil {
+				o.alert("Start at login", "Could not change the setting.")
+			}
+			// Reflect what is actually on disk, not what was asked for.
+			if o.StartAtLoginEnabled() {
+				m.startAtLogin.Check()
+			} else {
+				m.startAtLogin.Uncheck()
+			}
 		case <-m.quit.ClickedCh:
 			systray.Quit()
 			return
