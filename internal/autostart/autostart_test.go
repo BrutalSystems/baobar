@@ -120,43 +120,10 @@ func TestEnableReplacesPreviousEntry(t *testing.T) {
 }
 
 func TestDarwinPlistEscapesXML(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "baobar.plist")
-
-	// Create a fileAutostart with the Darwin render function
+	// Test the actual renderPlist function with dangerous characters
 	dangerousExe := "/Applications/My & Co/baobar<script>"
-	a := &fileAutostart{
-		path: path,
-		exe:  func() (string, error) { return dangerousExe, nil },
-		render: func(exe string) []byte {
-			// Inline the Darwin render logic
-			var esc bytes.Buffer
-			if err := xml.EscapeText(&esc, []byte(exe)); err != nil {
-				return nil
-			}
-			return []byte(strings.ReplaceAll(
-				`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key><string>com.brutalsystems.baobar</string>
-	<key>ProgramArguments</key><array><string>PLACEHOLDER</string></array>
-	<key>RunAtLoad</key><true/>
-</dict>
-</plist>
-`, "PLACEHOLDER", esc.String()))
-		},
-	}
+	b := renderPlist(label, dangerousExe)
 
-	if err := a.Enable(); err != nil {
-		t.Fatalf("Enable: %v", err)
-	}
-
-	// Verify file contains escaped characters
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
 	content := string(b)
 
 	// Should contain escaped entities, not raw dangerous characters
@@ -176,41 +143,10 @@ func TestDarwinPlistEscapesXML(t *testing.T) {
 }
 
 func TestLinuxDesktopEscapesShell(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "baobar.desktop")
-
-	// Create a fileAutostart with the Linux render function
+	// Test the actual renderDesktop function with dangerous characters
 	dangerousExe := `/opt/My App/baobar$SHELL`
-	a := &fileAutostart{
-		path: path,
-		exe:  func() (string, error) { return dangerousExe, nil },
-		render: func(exe string) []byte {
-			escaped := strings.NewReplacer(
-				`\`, `\\`,
-				`"`, `\"`,
-				"`", "\\`",
-				"$", "\\$",
-			).Replace(exe)
-			return []byte(strings.ReplaceAll(
-				`[Desktop Entry]
-Type=Application
-Name=Baobar
-Exec=PLACEHOLDER
-Terminal=false
-X-GNOME-Autostart-enabled=true
-`, "PLACEHOLDER", `"`+escaped+`"`))
-		},
-	}
+	b := renderDesktop(dangerousExe)
 
-	if err := a.Enable(); err != nil {
-		t.Fatalf("Enable: %v", err)
-	}
-
-	// Verify file contains quoted and escaped value
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
 	content := string(b)
 
 	// Should be quoted
