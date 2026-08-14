@@ -1,6 +1,7 @@
 package bao
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,12 +28,44 @@ func TestCacheRoundTripCreatesParentDir(t *testing.T) {
 // The cache must never contain token material. Deleting it is always safe.
 func TestCacheHoldsNoTokenMaterial(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "status.json")
-	SaveCache(p, Cache{CheckedAt: 1000, ExpiresAt: 2000, Name: "userpass-dev"})
+	SaveCache(p, Cache{
+		CheckedAt: 1000,
+		ExpiresAt: 2000,
+		Name:      "userpass-dev",
+		Token:     TokenStamp{ModTime: 1_700_000_000_000_000_000, Size: 95},
+	})
 
 	b, _ := os.ReadFile(p)
-	for _, field := range []string{"token", "hvs.", "client_token"} {
+
+	// Check for actual token material patterns (not just the word "token").
+	for _, field := range []string{"hvs.", "client_token"} {
 		if strings.Contains(string(b), field) {
 			t.Errorf("cache file contains %q: %s", field, b)
+		}
+	}
+
+	// Guard against future fields that might accidentally carry secrets:
+	// assert the exact key set of the cache JSON.
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("cache JSON unmarshal: %v", err)
+	}
+	expectedKeys := map[string]bool{
+		"checked_at":    true,
+		"expires_at":    true,
+		"never_expires": true,
+		"name":          true,
+		"policies":      true,
+		"stamp":         true,
+	}
+	for k := range m {
+		if !expectedKeys[k] {
+			t.Errorf("unexpected key in cache: %q (allowed: checked_at, expires_at, never_expires, name, policies, stamp)", k)
+		}
+	}
+	for k := range expectedKeys {
+		if _, ok := m[k]; !ok {
+			t.Errorf("missing expected key in cache: %q", k)
 		}
 	}
 }
