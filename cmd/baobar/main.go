@@ -59,11 +59,14 @@ func main() {
 			return removeToken(tokenPath)
 		},
 		Login: func(method string) error {
-			// Drop the cache so the next poll re-checks as soon as login lands.
-			_ = bao.DeleteCache(cachePath)
+			// Force the next poll to hit the server as soon as login lands,
+			// without discarding the cache: deleting it here would blow away
+			// the only thing keeping a Degraded countdown alive if the server
+			// is unreachable when the poll fires.
+			poller.Force()
 			return login.Launch(cfg.Addr, method)
 		},
-		Refresh:    func() { _ = bao.DeleteCache(cachePath) },
+		Refresh:    func() { poller.Force() },
 		Thresholds: tracker.Crossed,
 		Notify: func(threshold time.Duration) {
 			_ = notify.Send("OpenBao", fmt.Sprintf("Your token expires in less than %s", tray.Human(threshold)))
