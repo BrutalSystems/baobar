@@ -15,6 +15,19 @@ Baobar polls `lookup-self` at most once per `BAOBAR_RECHECK` window and recomput
 countdown locally every second in between — see [The audit-log invariant](#the-audit-log-invariant)
 before touching that interval.
 
+## Status
+
+M1 is code-complete: all five internal packages (`bao`, `config`, `notify`, `login`,
+`tray`) are implemented and unit-tested, and `go build` / `go vet` / `go test -race` are
+clean on macOS. What is **outstanding** is end-to-end verification against a live OpenBao
+server — the app has not yet been run against a real server, the thirteen manual checks in
+the M1 plan (signed-out/signed-in states, the countdown, the audit-log request-count
+invariant, offline/degraded behavior, logout, both login flows, the warning notification,
+the misconfiguration path, menu responsiveness under a hung server, re-login pickup, and
+behavior with no `bao` CLI on `PATH`) have not been performed, and the Windows and Linux
+builds have not been run on their target platforms. See [Build matrix](#build-matrix) for
+exactly which platforms have and have not been exercised.
+
 ## State table
 
 | State | Icon | Menu bar label | Meaning |
@@ -105,9 +118,11 @@ freshness you already have.
 | Windows | `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o dist/baobar.exe ./cmd/baobar` | cross-compiles cleanly from macOS: pure-Go syscalls, no cgo. `-H=windowsgui` suppresses the console window that would otherwise flash on launch |
 | Linux | `GOOS=linux GOARCH=amd64 go build -o dist/baobar-linux ./cmd/baobar` | also cross-compiles cleanly from macOS as of `fyne.io/systray` v1.12.2, which talks to the tray over D-Bus (`StatusNotifierItem`) in pure Go rather than linking GTK/appindicator via cgo. No `gcc`/`libgtk-3-dev`/`libayatana-appindicator3-dev` were needed to produce the binary used here. That build has not yet been *run* on a Linux desktop, so treat "the tray actually appears" as unverified rather than "impossible without cgo" — if a future systray version reintroduces a cgo path, `apt-get install gcc libgtk-3-dev libayatana-appindicator3-dev` is the fallback for building on/for Linux |
 
-The Windows tray icon and tooltip (including the countdown) have been eyeballed on a
-Windows machine as part of M1 sign-off; see the design doc for the platform truths that
-drove `SetTitle`/`SetTooltip` usage.
+The Windows binary **builds** (cross-compiled from macOS as shown above) but has **not
+been run** on a Windows machine: the tray icon color change across states and the tooltip
+countdown are implemented per the design doc's platform notes below, but neither has
+actually been eyeballed on Windows yet. Same caveat as Linux above — compiling is not the
+same as verifying the tray renders correctly. Both are open items before M1 sign-off.
 
 ## Platform notes
 
