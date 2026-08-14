@@ -61,21 +61,24 @@ XDG autostart, refined icon artwork.
 
 ```
 internal/authflow/          NEW — everything about acquiring a token
-  server.go                 one-shot loopback listener: bind, serve, shut down, time out
-  oidc.go                   OIDC: auth_url -> browser -> callback -> code exchange
-  userpass.go               served form -> userpass login -> two-phase MFA validate
-  page.go                   the embedded HTML form (go:embed, no external assets)
-internal/autostart/         NEW — one interface, three implementations
-  autostart.go              Enabled/Enable/Disable + New()
+  session.go                 one-shot loopback listener: bind, serve, shut down, time out
+  oidc.go                    OIDC: auth_url -> browser -> callback -> code exchange
+  userpass.go                userpass login -> two-phase MFA validate
+  browser.go                 serves the userpass form and drives UserpassBrowser end to end
+  login.html                 the embedded HTML form (go:embed, no external assets)
+internal/autostart/         NEW — one interface, per-platform implementations
+  autostart.go              Enabled/Enable/Disable + the shared file-backed implementation
+  render.go                  renders the plist / .desktop file contents
   autostart_darwin.go       ~/Library/LaunchAgents/<id>.plist
   autostart_windows.go      HKCU\Software\Microsoft\Windows\CurrentVersion\Run
   autostart_linux.go        ~/.config/autostart/baobar.desktop
 internal/login/             DELETED (see "What gets deleted")
 ```
 
-`internal/authflow` depends on `internal/bao` for writing the token and on nothing in
-`internal/tray`. The tray calls it through function values in `tray.Options`, exactly as it
-already calls logout.
+`internal/authflow` has no dependency on `internal/bao` or `internal/tray` — it returns the
+token string and lets the caller decide what to do with it. `cmd/baobar` is what wires
+`authflow.OIDC`/`authflow.UserpassBrowser` to `bao.WriteToken` and to `tray.Options`'
+function values, exactly as it already wires logout.
 
 ### The shared one-shot server
 
@@ -97,8 +100,13 @@ keeps working unchanged.
 
 1. Generate a `client_nonce` (32 bytes, crypto/rand, hex).
 2. `POST /v1/auth/<oidc_mount>/oidc/auth_url` with
-   `{"role": <oidc_role>, "redirect_uri": "http://localhost:<callback_port>/oidc/callback",
-   "client_nonce": <nonce>}` → `data.auth_url`.
+   `{"role": <oidc_role>, "redirect_uri": "http://127.0.0.1:<callback_port>/oidc/callback",
+   "client_nonce": <nonce>}` → `data.auth_url`. The redirect URI uses the **IP address**
+   `127.0.0.1`, not the hostname `localhost`: the listener below binds IPv4 loopback only,
+   and `localhost` can resolve to `::1` first on a machine with IPv6 enabled, which would
+   send the callback to a different (and possibly unbound, or worse, someone else's)
+   listener instead of this one. A role whose allowed redirect URIs list only the
+   `localhost` form needs the `127.0.0.1` variant added.
 3. Start the listener on `callback_port` (default **8250**) with a `/oidc/callback` route.
 4. Open the system browser at `auth_url`.
 5. The provider redirects back with `state` and `code`.
