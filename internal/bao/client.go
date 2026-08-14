@@ -32,7 +32,16 @@ type Client struct {
 func NewClient(addr string) *Client {
 	return &Client{
 		Addr: strings.TrimSuffix(addr, "/"),
-		HTTP: &http.Client{Timeout: 5 * time.Second},
+		// CheckRedirect: OpenBao never legitimately redirects lookup-self or
+		// revoke-self. Without this, a 307 from the configured address would
+		// make net/http resend the request — including the X-Vault-Token
+		// header, which Go strips only Authorization and Cookie on a
+		// cross-host redirect, not custom headers — to whatever host the
+		// redirect names. http.ErrUseLastResponse makes the client return the
+		// redirect response itself instead of following it.
+		HTTP: &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		}},
 	}
 }
 

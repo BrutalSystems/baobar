@@ -28,7 +28,20 @@ func (c OIDCConfig) client() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: 15 * time.Second}
+	return &http.Client{Timeout: 15 * time.Second, CheckRedirect: refuseRedirect}
+}
+
+// refuseRedirect stops net/http from ever following a redirect on a request
+// built by this package. OpenBao never legitimately redirects auth_url or
+// oidc/callback, and following one would be actively dangerous: Go resends
+// the request to whatever host the redirect names, carrying the Referer
+// header — which for the callback exchange includes the authorization code
+// and client_nonce as query parameters on the current URL — to that host.
+// Returning http.ErrUseLastResponse makes the client hand back the redirect
+// response itself instead of chasing it, so the caller sees an unexpected
+// status code rather than leaking anything.
+func refuseRedirect(req *http.Request, via []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // OIDC drives the browser through an OpenBao OIDC login and returns the token.

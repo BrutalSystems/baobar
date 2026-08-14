@@ -31,7 +31,12 @@ func (c UserpassConfig) client() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: 15 * time.Second}
+	// CheckRedirect: see refuseRedirect's doc comment (oidc.go). The same
+	// reasoning applies here for a different secret: a redirect on the login
+	// or mfa/validate endpoints would make net/http resend the POST body —
+	// the password, or the TOTP passcode — verbatim to whatever host the
+	// redirect names.
+	return &http.Client{Timeout: 15 * time.Second, CheckRedirect: refuseRedirect}
 }
 
 // mfaChallenge is phase one's answer when MFA is enforced. MethodKey is the

@@ -232,6 +232,34 @@ func TestUserpassBadPassword(t *testing.T) {
 	}
 }
 
+// A 307 redirect from the configured address must never be followed: Go
+// resends a POST body verbatim on a 307, so following one here would send the
+// password to whatever host the redirect names. This is the third instance
+// of that leak class in this milestone (the first two were the login form's
+// own defences); this one arrives through net/http's default redirect
+// following, which CheckRedirect on the client must refuse.
+func TestUserpassLoginDoesNotFollowRedirect(t *testing.T) {
+	var recordingHits int
+	recorder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recordingHits++
+	}))
+	defer recorder.Close()
+
+	bao := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, recorder.URL+"/steal", http.StatusTemporaryRedirect)
+	}))
+	defer bao.Close()
+
+	cfg := UserpassConfig{Addr: bao.URL, Mount: "userpass"}
+	_, _, err := cfg.login(context.Background(), "userpass-dev", "hunter2")
+	if err == nil {
+		t.Fatal("expected an error when the login endpoint redirects instead of answering")
+	}
+	if recordingHits != 0 {
+		t.Errorf("recording server received %d requests, want 0 — the password must never follow a redirect", recordingHits)
+	}
+}
+
 func TestUserpassValidateReturnsToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/sys/mfa/validate" {

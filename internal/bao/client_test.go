@@ -109,6 +109,39 @@ func TestLookupSelfNetworkErrorIsNotForbidden(t *testing.T) {
 	}
 }
 
+// A 307 from the configured address must never be followed: net/http resends
+// both the request method and its headers on a 307, and Go only strips
+// Authorization and Cookie across a cross-host redirect — X-Vault-Token would
+// travel to whatever host the redirect names. This is the third instance of
+// this leak class fixed in this milestone.
+func TestLookupSelfDoesNotFollowRedirect(t *testing.T) {
+	var recordingHits int
+	var sawToken bool
+	recorder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recordingHits++
+		if r.Header.Get("X-Vault-Token") != "" {
+			sawToken = true
+		}
+	}))
+	defer recorder.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, recorder.URL+"/steal", http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+
+	_, err := NewClient(srv.URL).LookupSelf(context.Background(), "hvs.secret-token", time.Now())
+	if err == nil {
+		t.Fatal("expected an error when lookup-self redirects instead of answering")
+	}
+	if recordingHits != 0 {
+		t.Errorf("recording server received %d requests, want 0 — the token must never follow a redirect", recordingHits)
+	}
+	if sawToken {
+		t.Error("recording server saw X-Vault-Token — it must never leave this process toward a redirect target")
+	}
+}
+
 func TestRevokeSelf(t *testing.T) {
 	var called bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

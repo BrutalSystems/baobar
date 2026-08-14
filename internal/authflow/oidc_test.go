@@ -191,6 +191,49 @@ func TestOIDCOmitsAnEmptyRole(t *testing.T) {
 	}
 }
 
+// A 302 on the callback exchange must never be followed. Go sends a Referer
+// header on the resent request carrying the current URL — which for this
+// exchange includes the authorization code, state, and client_nonce as query
+// parameters — to whatever host the redirect names. This is the same leak
+// class fixed twice already in this milestone (Task 3's nonce-guarded form,
+// the Sec-Fetch-Site check), arriving here through net/http's default
+// redirect-following instead.
+func TestOIDCExchangeDoesNotFollowRedirect(t *testing.T) {
+	var recordingHits int
+	recorder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recordingHits++
+	}))
+	defer recorder.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/oidc/auth_url"):
+			var body struct {
+				RedirectURI string `json:"redirect_uri"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"auth_url": body.RedirectURI + "?code=abc&state=xyz"},
+			})
+		case strings.HasSuffix(r.URL.Path, "/oidc/callback"):
+			http.Redirect(w, r, recorder.URL+"/steal", http.StatusFound)
+		}
+	}))
+	defer srv.Close()
+
+	cfg := OIDCConfig{
+		Addr: srv.URL, Mount: "oidc", CallbackPort: 0, Timeout: 5 * time.Second,
+		OpenURL: func(u string) error { go http.Get(u); return nil },
+	}
+
+	if _, err := OIDC(context.Background(), cfg); err == nil {
+		t.Fatal("expected an error when the callback exchange redirects instead of answering")
+	}
+	if recordingHits != 0 {
+		t.Errorf("recording server received %d requests, want 0 — the auth code/nonce must never follow a redirect", recordingHits)
+	}
+}
+
 // A transport failure must not leak the authorization code or client_nonce.
 // Go's *url.Error embeds the full request URL in Error(), and the callback
 // exchange carries both as query parameters.
