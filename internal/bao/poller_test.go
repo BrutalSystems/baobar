@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// testAddr is the server every poller in this file talks to.
+const testAddr = "https://bao.example.com"
+
 type fakeLookuper struct {
 	info  Info
 	err   error
@@ -30,6 +33,7 @@ func newPoller(t *testing.T, l Lookuper, now time.Time) (*Poller, string, string
 	cachePath := filepath.Join(dir, "status.json")
 	return &Poller{
 		Client:    l,
+		Addr:      testAddr,
 		TokenPath: tokenPath,
 		CachePath: cachePath,
 		Recheck:   300 * time.Second,
@@ -67,7 +71,7 @@ func TestStatusUsesFreshCacheWithoutCallingTheServer(t *testing.T) {
 	l := &fakeLookuper{}
 	p, tokenPath, cachePath := newPoller(t, l, now)
 	stamp := writeToken(t, tokenPath, "hvs.abc")
-	SaveCache(cachePath, Cache{
+	SaveCache(cachePath, Cache{Addr: testAddr,
 		CheckedAt: 9_900, ExpiresAt: 10_000 + int64(6*time.Hour/time.Second),
 		Name: "userpass-dev", Policies: []string{"admin"}, Token: stamp,
 	})
@@ -99,7 +103,7 @@ func TestStatusRechecksWhenTokenFileChanges(t *testing.T) {
 	p, tokenPath, cachePath := newPoller(t, l, now)
 
 	writeToken(t, tokenPath, "hvs.old")
-	SaveCache(cachePath, Cache{
+	SaveCache(cachePath, Cache{Addr: testAddr,
 		CheckedAt: 9_900, ExpiresAt: 10_000 + int64(90*time.Minute/time.Second),
 		Name: "userpass-dev", Token: StampToken(tokenPath),
 	})
@@ -123,7 +127,7 @@ func TestStatusRefreshesStaleCache(t *testing.T) {
 	}}
 	p, tokenPath, cachePath := newPoller(t, l, now)
 	stamp := writeToken(t, tokenPath, "hvs.abc")
-	SaveCache(cachePath, Cache{CheckedAt: 1, ExpiresAt: 99_999, Name: "old", Token: stamp})
+	SaveCache(cachePath, Cache{Addr: testAddr, CheckedAt: 1, ExpiresAt: 99_999, Name: "old", Token: stamp})
 
 	got := p.Status(context.Background())
 	if l.calls != 1 {
@@ -156,7 +160,7 @@ func TestStatusForbiddenClearsCache(t *testing.T) {
 	l := &fakeLookuper{err: ErrForbidden}
 	p, tokenPath, cachePath := newPoller(t, l, now)
 	stamp := writeToken(t, tokenPath, "hvs.revoked")
-	SaveCache(cachePath, Cache{CheckedAt: 1, ExpiresAt: 99_999, Name: "old", Token: stamp})
+	SaveCache(cachePath, Cache{Addr: testAddr, CheckedAt: 1, ExpiresAt: 99_999, Name: "old", Token: stamp})
 
 	got := p.Status(context.Background())
 	if got.State != StateSignedOut {
@@ -173,7 +177,7 @@ func TestStatusNetworkErrorIsDegradedNotSignedOut(t *testing.T) {
 	l := &fakeLookuper{err: errors.New("dial tcp: connection refused")}
 	p, tokenPath, cachePath := newPoller(t, l, now)
 	stamp := writeToken(t, tokenPath, "hvs.abc")
-	SaveCache(cachePath, Cache{
+	SaveCache(cachePath, Cache{Addr: testAddr,
 		CheckedAt: 1, ExpiresAt: 10_000 + int64(6*time.Hour/time.Second),
 		Name: "userpass-dev", Token: stamp,
 	})
@@ -211,7 +215,7 @@ func TestStatusExpiredCacheOfflineIsSignedOut(t *testing.T) {
 	l := &fakeLookuper{err: errors.New("dial tcp: connection refused")}
 	p, tokenPath, cachePath := newPoller(t, l, now)
 	stamp := writeToken(t, tokenPath, "hvs.abc")
-	SaveCache(cachePath, Cache{CheckedAt: 1, ExpiresAt: 9_000, Name: "userpass-dev", Token: stamp})
+	SaveCache(cachePath, Cache{Addr: testAddr, CheckedAt: 1, ExpiresAt: 9_000, Name: "userpass-dev", Token: stamp})
 
 	if got := p.Status(context.Background()); got.State != StateSignedOut {
 		t.Errorf("State = %v, want signed-out", got.State)
@@ -239,7 +243,7 @@ func TestStatusNonExpiringTokenDegradedOnTransportError(t *testing.T) {
 	l := &fakeLookuper{err: errors.New("dial tcp: connection refused")}
 	p, tokenPath, cachePath := newPoller(t, l, now)
 	stamp := writeToken(t, tokenPath, "hvs.root")
-	SaveCache(cachePath, Cache{
+	SaveCache(cachePath, Cache{Addr: testAddr,
 		CheckedAt: 1, NeverExpires: true, Name: "root", Policies: []string{"root"}, Token: stamp,
 	})
 
@@ -544,7 +548,7 @@ func TestStatusForbiddenClearsCacheWhenWrapped(t *testing.T) {
 	l := &fakeLookuper{err: fmt.Errorf("lookup failed: %w", ErrForbidden)}
 	p, tokenPath, cachePath := newPoller(t, l, now)
 	stamp := writeToken(t, tokenPath, "hvs.revoked")
-	SaveCache(cachePath, Cache{CheckedAt: 1, ExpiresAt: 99_999, Name: "old", Token: stamp})
+	SaveCache(cachePath, Cache{Addr: testAddr, CheckedAt: 1, ExpiresAt: 99_999, Name: "old", Token: stamp})
 
 	got := p.Status(context.Background())
 	if got.State != StateSignedOut {
@@ -552,5 +556,50 @@ func TestStatusForbiddenClearsCacheWhenWrapped(t *testing.T) {
 	}
 	if _, ok := LoadCache(cachePath); ok {
 		t.Error("cache survived a wrapped 403")
+	}
+}
+
+// Reproduces a bug seen live: with a cache written by one server still fresh,
+// pointing Baobar at a DIFFERENT address served the first server's identity,
+// policies, and countdown — and made no request at all while doing so. The app
+// reported the user signed in to a server it had never contacted.
+func TestStatusIgnoresCacheFromAnotherServer(t *testing.T) {
+	now := time.Unix(10_000, 0)
+	l := &fakeLookuper{err: ErrForbidden}
+	p, tokenPath, cachePath := newPoller(t, l, now)
+	stamp := writeToken(t, tokenPath, "hvs.abc")
+
+	// A perfectly fresh entry — but from a different server.
+	SaveCache(cachePath, Cache{
+		Addr: "https://other.example.com", CheckedAt: 9_900,
+		ExpiresAt: 10_000 + int64(6*time.Hour/time.Second),
+		Name:      "userpass-dev", Policies: []string{"admin"}, Token: stamp,
+	})
+
+	got := p.Status(context.Background())
+
+	if l.calls != 1 {
+		t.Errorf("server called %d times, want 1 — a cache from another server must not be served", l.calls)
+	}
+	if got.Name == "userpass-dev" {
+		t.Error("served the other server's identity")
+	}
+	if got.State != StateSignedOut {
+		t.Errorf("State = %v, want signed-out (this server rejected the token)", got.State)
+	}
+}
+
+// The address recorded must be the poller's own, so the next run can tell.
+func TestStatusStampsTheCacheWithItsServer(t *testing.T) {
+	now := time.Unix(10_000, 0)
+	l := &fakeLookuper{info: Info{ExpiresAt: now.Add(2 * time.Hour), Name: "userpass-dev"}}
+	p, tokenPath, cachePath := newPoller(t, l, now)
+	writeToken(t, tokenPath, "hvs.abc")
+
+	p.Status(context.Background())
+
+	c, ok := LoadCache(cachePath)
+	if !ok || c.Addr != testAddr {
+		t.Errorf("cache Addr = %q, want %q", c.Addr, testAddr)
 	}
 }

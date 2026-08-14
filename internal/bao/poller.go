@@ -37,9 +37,13 @@ type Poller struct {
 	Client    Lookuper
 	TokenPath string
 	CachePath string
-	Recheck   time.Duration
-	Warn      time.Duration
-	Now       func() time.Time
+	// Addr identifies the server Client talks to. It is recorded in the cache
+	// so an entry from a different server is never served; without it, changing
+	// VAULT_ADDR shows the previous server's session until the entry goes stale.
+	Addr    string
+	Recheck time.Duration
+	Warn    time.Duration
+	Now     func() time.Time
 
 	mu sync.Mutex
 	// lastAttempt is the clock time of the last server call Status made, zero
@@ -94,7 +98,7 @@ func (p *Poller) Status(ctx context.Context) Status {
 	// the very next call even if the cache looks fresh — that is the entire
 	// point of asking for one. Skip the fresh-cache shortcut in that case only.
 	if !forceNext {
-		if c, ok := LoadCache(p.CachePath); ok && c.Fresh(now, p.Recheck, stamp) {
+		if c, ok := LoadCache(p.CachePath); ok && c.Fresh(now, p.Recheck, stamp, p.Addr) {
 			return p.recordStatus(p.statusFrom(c, now, true))
 		}
 	}
@@ -139,6 +143,7 @@ func (p *Poller) Status(ctx context.Context) Status {
 		NeverExpires: info.NeverExpires,
 		Name:         info.Name,
 		Policies:     info.Policies,
+		Addr:         p.Addr,
 		Token:        stamp,
 	}
 	_ = SaveCache(p.CachePath, c)

@@ -31,12 +31,17 @@ func StampToken(path string) TokenStamp {
 // token file's mtime and size — so deleting it is always safe and merely forces
 // a fresh lookup.
 type Cache struct {
-	CheckedAt    int64      `json:"checked_at"`
-	ExpiresAt    int64      `json:"expires_at"`
-	NeverExpires bool       `json:"never_expires"`
-	Name         string     `json:"name"`
-	Policies     []string   `json:"policies"`
-	Token        TokenStamp `json:"stamp"`
+	CheckedAt    int64    `json:"checked_at"`
+	ExpiresAt    int64    `json:"expires_at"`
+	NeverExpires bool     `json:"never_expires"`
+	Name         string   `json:"name"`
+	Policies     []string `json:"policies"`
+	// Addr is the server this entry describes. Without it, pointing Baobar at a
+	// different VAULT_ADDR would serve the PREVIOUS server's identity, policies,
+	// and countdown — reporting the user as signed in to a server it has never
+	// spoken to. Observed in a live run against a second address.
+	Addr  string     `json:"addr"`
+	Token TokenStamp `json:"stamp"`
 }
 
 // LoadCache reports ok=false for a missing or unreadable cache. A corrupt cache
@@ -75,7 +80,14 @@ func DeleteCache(path string) error {
 // Fresh reports whether the cache can be trusted without calling the server.
 // stamp is the token file's current stamp: if it differs from the one recorded,
 // the user logged in again and this entry describes a token that is gone.
-func (c Cache) Fresh(now time.Time, recheck time.Duration, stamp TokenStamp) bool {
+// addr is the server being asked about; an entry from a different one is never
+// fresh, however recent.
+func (c Cache) Fresh(now time.Time, recheck time.Duration, stamp TokenStamp, addr string) bool {
+	// An entry from another server describes a session this one knows nothing
+	// about. Serving it would misreport which server the user is signed in to.
+	if c.Addr != addr {
+		return false
+	}
 	if c.Token != stamp {
 		return false
 	}

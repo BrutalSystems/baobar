@@ -36,6 +36,7 @@ func main() {
 	client := bao.NewClient(cfg.Addr)
 	poller := &bao.Poller{
 		Client:    client,
+		Addr:      cfg.Addr,
 		TokenPath: tokenPath,
 		CachePath: cachePath,
 		Recheck:   cfg.Recheck,
