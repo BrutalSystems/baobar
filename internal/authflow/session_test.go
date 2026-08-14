@@ -2,9 +2,11 @@ package authflow
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -24,18 +26,64 @@ func TestSessionBindsLoopbackOnly(t *testing.T) {
 	}
 }
 
-// A request arriving with a foreign Host is either a cross-origin POST or DNS
-// rebinding. These routes take a password; they refuse both.
+// A foreign Host is DNS rebinding: a public hostname pointed at 127.0.0.1.
+// The guard refuses it before the handler runs. (It is not a CSRF defence —
+// see the doc comment on guard in session.go.)
 func TestSessionRejectsAForeignHost(t *testing.T) {
+	cases := []string{
+		"evil.example.com",
+		"127.0.0.1.evil.com",
+		"localhost.evil.com",
+		"127.0.0.2",
+	}
+	for _, host := range cases {
+		t.Run(host, func(t *testing.T) {
+			s, err := newSession(0, time.Minute)
+			if err != nil {
+				t.Fatalf("newSession: %v", err)
+			}
+			var reached atomic.Bool
+			s.handle("/x", func(w http.ResponseWriter, r *http.Request) { reached.Store(true) })
+
+			_, port, err := net.SplitHostPort(s.ln.Addr().String())
+			if err != nil {
+				t.Fatalf("SplitHostPort: %v", err)
+			}
+			go func() {
+				req, _ := http.NewRequest(http.MethodGet, s.baseURL()+"/x", nil)
+				req.Host = net.JoinHostPort(host, port)
+				resp, err := http.DefaultClient.Do(req)
+				if err == nil {
+					if resp.StatusCode != http.StatusForbidden {
+						t.Errorf("status = %d, want 403", resp.StatusCode)
+					}
+					resp.Body.Close()
+				}
+				s.finish("done", nil)
+			}()
+			s.serve()
+
+			if reached.Load() {
+				t.Error("handler ran for a request with a foreign Host")
+			}
+		})
+	}
+}
+
+// The Host guard must also refuse a request naming our own host but the
+// wrong port: without that check, anything on the loopback interface (not
+// just our listener) would pass.
+func TestSessionRejectsRightHostWrongPort(t *testing.T) {
 	s, err := newSession(0, time.Minute)
 	if err != nil {
 		t.Fatalf("newSession: %v", err)
 	}
-	var reached bool
-	s.handle("/x", func(w http.ResponseWriter, r *http.Request) { reached = true })
+	var reached atomic.Bool
+	s.handle("/x", func(w http.ResponseWriter, r *http.Request) { reached.Store(true) })
+
 	go func() {
 		req, _ := http.NewRequest(http.MethodGet, s.baseURL()+"/x", nil)
-		req.Host = "evil.example.com"
+		req.Host = "127.0.0.1:1" // deliberately not our listener's port
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			if resp.StatusCode != http.StatusForbidden {
@@ -47,8 +95,51 @@ func TestSessionRejectsAForeignHost(t *testing.T) {
 	}()
 	s.serve()
 
-	if reached {
-		t.Error("handler ran for a request with a foreign Host")
+	if reached.Load() {
+		t.Error("handler ran for a request naming the right host but the wrong port")
+	}
+}
+
+// Rejecting a foreign Host must not accidentally reject our own — the guard
+// deliberately accepts both 127.0.0.1 and localhost, since OpenBao's
+// conventional OIDC redirect URI is http://localhost:8250/oidc/callback.
+func TestSessionAcceptsOurOwnHost(t *testing.T) {
+	for _, host := range []string{"127.0.0.1", "localhost"} {
+		t.Run(host, func(t *testing.T) {
+			s, err := newSession(0, time.Minute)
+			if err != nil {
+				t.Fatalf("newSession: %v", err)
+			}
+			var reached atomic.Bool
+			s.handle("/x", func(w http.ResponseWriter, r *http.Request) {
+				reached.Store(true)
+				s.finish("ok", nil)
+			})
+
+			_, port, err := net.SplitHostPort(s.ln.Addr().String())
+			if err != nil {
+				t.Fatalf("SplitHostPort: %v", err)
+			}
+			go func() {
+				req, _ := http.NewRequest(http.MethodGet, s.baseURL()+"/x", nil)
+				req.Host = net.JoinHostPort(host, port)
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					s.finish("", err)
+					return
+				}
+				resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					t.Errorf("status = %d, want 200", resp.StatusCode)
+				}
+			}()
+			if _, err := s.serve(); err != nil {
+				t.Fatalf("serve: %v", err)
+			}
+			if !reached.Load() {
+				t.Errorf("handler did not run for Host %q", host)
+			}
+		})
 	}
 }
 
@@ -104,6 +195,27 @@ func TestSessionTimesOut(t *testing.T) {
 	}
 }
 
+// A listener left open after serve() returns is exactly the standing local
+// endpoint the timeout is meant to prevent: once serve() returns, the port
+// must actually stop accepting connections.
+func TestSessionShutsDownOnTimeout(t *testing.T) {
+	s, err := newSession(0, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("newSession: %v", err)
+	}
+	addr := s.ln.Addr().String()
+
+	if _, err := s.serve(); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	if err == nil {
+		conn.Close()
+		t.Error("listener still accepting connections after serve() returned")
+	}
+}
+
 // The browser can hit the callback more than once (reloads, prefetch).
 func TestSessionFinishIsIdempotent(t *testing.T) {
 	s, err := newSession(0, time.Minute)
@@ -119,6 +231,30 @@ func TestSessionFinishIsIdempotent(t *testing.T) {
 	token, err := s.serve()
 	if err != nil || token != "first" {
 		t.Fatalf("got %q, %v — want the first result to win", token, err)
+	}
+}
+
+// finish must stay idempotent under real concurrency, not just sequential
+// calls from one goroutine: a plain bool guard (instead of sync.Once) would
+// be a data race here, and -race must catch it.
+func TestSessionFinishIsIdempotentConcurrently(t *testing.T) {
+	s, err := newSession(0, time.Minute)
+	if err != nil {
+		t.Fatalf("newSession: %v", err)
+	}
+
+	const n = 50
+	for i := 0; i < n; i++ {
+		i := i
+		go s.finish(fmt.Sprintf("token-%d", i), nil)
+	}
+
+	token, err := s.serve()
+	if err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	if !strings.HasPrefix(token, "token-") {
+		t.Errorf("token = %q, want one of the concurrently-finished values", token)
 	}
 }
 

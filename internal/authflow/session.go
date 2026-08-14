@@ -9,14 +9,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 )
-
-// (net is used by both the listener and the Host guard below.)
 
 var (
 	// ErrBusy means another login flow is already running.
@@ -76,19 +75,25 @@ func newSession(port int, timeout time.Duration) (*session, error) {
 	}, nil
 }
 
-// guard applies the two protections every route of a login flow needs.
+// guard refuses any request whose Host does not name our own listener,
+// address and port. That defeats DNS rebinding: a public hostname that
+// resolves to 127.0.0.1 still can't present our Host, since it doesn't
+// control what the attacker's DNS record is named.
 //
-// The Host check matters more than it looks: a remote page cannot READ our
-// responses, but it can drive a cross-origin form POST, and DNS rebinding can
-// point a public hostname at 127.0.0.1. Since these routes accept a password,
-// anything whose Host is not our own loopback address is refused outright.
+// It is NOT a CSRF defence. A browser always sends the correct Host for the
+// connection it opened, so this check cannot stop a cross-origin form POST —
+// and it must not try to reject cross-site requests wholesale, because an
+// OIDC provider's redirect back to us IS a cross-site navigation. Any route
+// that accepts credentials has to protect itself (see Task 5: an unguessable
+// nonce in the path plus a same-origin Sec-Fetch-Site check on the POST).
 func guard(addr string, h http.Handler) http.Handler {
+	_, wantPort, _ := net.SplitHostPort(addr)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host := r.Host
-		if h, _, err := net.SplitHostPort(r.Host); err == nil {
-			host = h
+		host, port, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host, port = r.Host, ""
 		}
-		if host != "127.0.0.1" && host != "localhost" {
+		if (host != "127.0.0.1" && host != "localhost") || port != wantPort {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -134,10 +139,15 @@ func (s *session) serve() (string, error) {
 }
 
 // writePage renders the minimal end-of-flow page shown in the browser. It never
-// contains a token, an identity, or a server address.
+// contains a token, an identity, or a server address. title and message are
+// escaped before being written: message in particular is where later tasks
+// will put an error string echoed from an identity provider or OpenBao.
 func writePage(w http.ResponseWriter, title, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	safeTitle := html.EscapeString(title)
+	safeMessage := html.EscapeString(message)
 	fmt.Fprintf(w, "<!doctype html><meta charset=utf-8><title>%s</title>"+
 		"<body style=\"font:16px system-ui;padding:3rem;max-width:32rem;margin:auto\">"+
-		"<h1 style=\"font-size:1.25rem\">%s</h1><p>%s</p>", title, title, message)
+		"<h1 style=\"font-size:1.25rem\">%s</h1><p>%s</p>", safeTitle, safeTitle, safeMessage)
 }
