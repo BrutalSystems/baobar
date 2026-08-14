@@ -51,9 +51,16 @@ func Label(s bao.Status) string {
 func Tooltip(s bao.Status) string {
 	switch s.State {
 	case bao.StateSignedIn, bao.StateExpiring:
+		if s.NeverExpires {
+			return fmt.Sprintf("OpenBao: signed in as %s, session does not expire%s",
+				s.Name, policySuffix(s.Policies))
+		}
 		return fmt.Sprintf("OpenBao: signed in as %s, %s left%s",
 			s.Name, Human(s.Remaining), policySuffix(s.Policies))
 	case bao.StateDegraded:
+		if s.NeverExpires {
+			return "OpenBao: server unreachable — cached session does not expire"
+		}
 		if s.Remaining > 0 {
 			return fmt.Sprintf("OpenBao: server unreachable — %s left on the cached session", Human(s.Remaining))
 		}
