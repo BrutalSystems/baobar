@@ -99,6 +99,29 @@ func newSession(port int, timeout time.Duration) (*session, error) {
 	}, nil
 }
 
+// ipv6Unavailable reports whether an IPv6 bind failed because this host has
+// no usable IPv6 — the only reason it is safe to continue with IPv4 alone.
+// Everything else, including a port already held by another process, is
+// fatal: proceeding would let whoever holds [::1] receive our callback.
+// Enumerating the SAFE errors rather than the fatal ones matters because
+// syscall.EADDRINUSE is a fabricated placeholder on Windows, where the real
+// Winsock error is 10048 — an unknown-error default would fail open there.
+func ipv6Unavailable(err error) bool {
+	for _, safe := range []error{
+		syscall.EAFNOSUPPORT,
+		syscall.EADDRNOTAVAIL,
+		syscall.EPROTONOSUPPORT,
+		syscall.ENETUNREACH,
+		syscall.Errno(10047), // WSAEAFNOSUPPORT
+		syscall.Errno(10049), // WSAEADDRNOTAVAIL
+	} {
+		if errors.Is(err, safe) {
+			return true
+		}
+	}
+	return false
+}
+
 // newLoopbackSession binds port on BOTH 127.0.0.1 and [::1], and its
 // baseURL() names the host "localhost" instead of an IP literal — the
 // redirect URI form already allow-listed on the OpenBao OIDC role and (unlike
@@ -107,51 +130,91 @@ func newSession(port int, timeout time.Duration) (*session, error) {
 //
 // Binding both loopback addresses closes the gap a single-stack listener
 // would leave: on a dual-stack host "localhost" can resolve to ::1 before
-// 127.0.0.1, so if we only bound the v4 side, another local process already
-// squatting [::1]:port could be the one to receive the OIDC callback —
-// authorization code and all — instead of us. If [::1]:port turns out to
-// already be held, that IS that squatting scenario, so the whole call fails
-// rather than quietly proceeding on v4 alone: handing the callback to
+// 127.0.0.1 (Windows prefers it), so if we only bound the v4 side, another
+// local process already squatting [::1]:port could be the one to receive
+// the OIDC callback — authorization code and all — instead of us. Whether
+// that's what's happening is decided by ipv6Unavailable: only a recognised
+// no-IPv6-here error is safe to proceed past. Everything else, including
+// [::1]:port already being held, is fatal — handing the callback to
 // whatever's sitting on the address we couldn't get is the exact outcome
-// this function exists to prevent. If IPv6 is simply unavailable on this
-// host (no address family, disabled), a v4-only listener is safe instead of
-// a compromise, since a host with no IPv6 resolves "localhost" only to
-// 127.0.0.1.
+// this function exists to prevent, so it fails closed by default rather
+// than trying to enumerate every fatal case.
+//
+// port == 0 (any free port) retries the whole pair up to five times: the
+// OS-picked v4 port can, rarely, already be held on [::1] by something
+// unrelated to any squatting attempt, and a fresh port sidesteps that
+// without weakening the fatal check itself. A caller-supplied fixed port
+// (the OIDC callback's normal case) gets a single attempt, same as before —
+// retrying a port the caller specifically asked for would just mask a real
+// conflict.
 func newLoopbackSession(port int, timeout time.Duration) (*session, error) {
+	tries := 1
+	if port == 0 {
+		tries = 5
+	}
+
+	var err error
+	for i := 0; i < tries; i++ {
+		var s *session
+		if s, err = bindLoopbackPair(port, timeout); err == nil {
+			return s, nil
+		}
+	}
+	return nil, err
+}
+
+// bindLoopbackPair is newLoopbackSession's single attempt: bind 127.0.0.1,
+// then attempt [::1] on the same port. On any early return the listeners
+// already opened are closed via session.close() — between here and the
+// caller's serve(), nothing else owns them.
+func bindLoopbackPair(port int, timeout time.Duration) (*session, error) {
 	ln4, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return nil, fmt.Errorf("listen on 127.0.0.1:%d: %w", port, err)
 	}
 	_, p, _ := net.SplitHostPort(ln4.Addr().String())
 
-	var extra []net.Listener
+	s := &session{
+		ln:      ln4,
+		host:    "localhost",
+		done:    make(chan outcome, 1),
+		timeout: timeout,
+	}
+
 	ln6, err := net.Listen("tcp", fmt.Sprintf("[::1]:%s", p))
 	switch {
 	case err == nil:
-		extra = append(extra, ln6)
-	case errors.Is(err, syscall.EADDRINUSE):
-		// Another process holds [::1] on our port. That is precisely the
-		// squatting scenario this function exists to close, so refuse
-		// outright rather than falling back to v4-only.
-		ln4.Close()
-		return nil, fmt.Errorf(
-			"port %s is already in use on [::1] by another process; "+
-				"refusing to hand it the login callback", p)
+		s.extra = append(s.extra, ln6)
+	case ipv6Unavailable(err):
+		// No usable IPv6 on this host — proceed on IPv4 only. A host with
+		// no IPv6 resolves "localhost" only to 127.0.0.1, so this is safe,
+		// not a compromise.
 	default:
-		// Any other failure means IPv6 isn't usable here at all — no such
-		// address family, or it's disabled. Proceed on IPv4 only.
+		// Anything else — most importantly [::1]:port already being held —
+		// is fatal. Do not guess; refuse.
+		s.close()
+		return nil, fmt.Errorf(
+			"could not secure port %s on both loopback addresses (127.0.0.1 "+
+				"and [::1]); refusing to leave the login callback reachable "+
+				"to whatever is holding [::1]: %w", p, err)
 	}
 
 	mux := http.NewServeMux()
-	return &session{
-		ln:      ln4,
-		extra:   extra,
-		host:    "localhost",
-		mux:     mux,
-		srv:     &http.Server{Handler: guard(ln4.Addr().String(), mux)},
-		done:    make(chan outcome, 1),
-		timeout: timeout,
-	}, nil
+	s.mux = mux
+	s.srv = &http.Server{Handler: guard(ln4.Addr().String(), mux)}
+	return s, nil
+}
+
+// close closes every listener the session holds. It exists for early-return
+// paths before serve() has run — once serve() is running, its own shutdown
+// handles this instead.
+func (s *session) close() {
+	if s.ln != nil {
+		s.ln.Close()
+	}
+	for _, ln := range s.extra {
+		ln.Close()
+	}
 }
 
 // guard refuses any request whose Host does not name our own listener,

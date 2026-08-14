@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -460,6 +462,83 @@ func TestNewLoopbackSessionRefusesWhenIPv6IsHeld(t *testing.T) {
 
 	if _, err := newLoopbackSession(port, time.Minute); err == nil {
 		t.Fatal("expected an error when [::1]:port is already held by another listener")
+	}
+}
+
+// This is the highest-severity property newLoopbackSession has: it must
+// bind exact loopback literals, never a wildcard or unspecified address.
+// A mutation from "127.0.0.1:%d" to ":%d", or "[::1]:%s" to "[::]:%s", would
+// expose a credential-accepting endpoint to the network — the single worst
+// outcome in this whole design — and this test exists to catch that
+// directly rather than relying on it being caught incidentally elsewhere.
+func TestNewLoopbackSessionBindsExactLoopbackAddresses(t *testing.T) {
+	s, err := newLoopbackSession(0, time.Minute)
+	if err != nil {
+		t.Fatalf("newLoopbackSession: %v", err)
+	}
+	go s.finish("", nil)
+	defer s.serve(context.Background())
+
+	host4, _, err := net.SplitHostPort(s.ln.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort(%q): %v", s.ln.Addr().String(), err)
+	}
+	if host4 != "127.0.0.1" {
+		t.Fatalf("primary listener bound to host %q, want 127.0.0.1", host4)
+	}
+
+	if len(s.extra) == 0 {
+		t.Skip("host has no usable IPv6 loopback; nothing further to check")
+	}
+	host6, _, err := net.SplitHostPort(s.extra[0].Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort(%q): %v", s.extra[0].Addr().String(), err)
+	}
+	if host6 != "::1" {
+		t.Fatalf("extra listener bound to host %q, want ::1", host6)
+	}
+}
+
+// ipv6Unavailable decides whether newLoopbackSession may fall back to IPv4
+// alone. This table is exhaustive and platform-agnostic on purpose: the
+// function it tests exists specifically because syscall.EADDRINUSE is a
+// fabricated placeholder value on Windows (Winsock's real error is 10048),
+// so a naive "which error IS the fatal one" check silently fails open there.
+// Enumerating the safe cases instead means an unrecognised error — on any
+// platform — stays fatal by default.
+func TestIPv6Unavailable(t *testing.T) {
+	wrap := func(err error) error {
+		return &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", err)}
+	}
+
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"EAFNOSUPPORT", syscall.EAFNOSUPPORT, true},
+		{"EADDRNOTAVAIL", syscall.EADDRNOTAVAIL, true},
+		{"EPROTONOSUPPORT", syscall.EPROTONOSUPPORT, true},
+		{"ENETUNREACH", syscall.ENETUNREACH, true},
+		{"WSAEAFNOSUPPORT (10047)", syscall.Errno(10047), true},
+		{"WSAEADDRNOTAVAIL (10049)", syscall.Errno(10049), true},
+
+		{"EADDRINUSE", syscall.EADDRINUSE, false},
+		{"WSAEADDRINUSE (10048)", syscall.Errno(10048), false},
+		{"EACCES", syscall.EACCES, false},
+		{"EPERM", syscall.EPERM, false},
+		{"wrapped EADDRINUSE", wrap(syscall.EADDRINUSE), false},
+		{"wrapped WSAEADDRINUSE (10048)", wrap(syscall.Errno(10048)), false},
+		{"wrapped EACCES", wrap(syscall.EACCES), false},
+		{"wrapped EPERM", wrap(syscall.EPERM), false},
+		{"plain error", errors.New("boom"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ipv6Unavailable(tc.err); got != tc.want {
+				t.Errorf("ipv6Unavailable(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 
