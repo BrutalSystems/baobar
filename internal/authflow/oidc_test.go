@@ -3,6 +3,7 @@ package authflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -231,6 +232,39 @@ func TestOIDCExchangeDoesNotFollowRedirect(t *testing.T) {
 	}
 	if recordingHits != 0 {
 		t.Errorf("recording server received %d requests, want 0 — the auth code/nonce must never follow a redirect", recordingHits)
+	}
+}
+
+// The equivalent of TestUserpassBrowserReturnsPromptlyOnContextCancellation
+// for the OIDC flow: a cancelled context must unblock OIDC promptly rather
+// than waiting out cfg.Timeout, since the tray wires a cancel into a login
+// goroutine it may need to abandon. Unlike UserpassBrowser, OIDC's first step
+// (authURL) talks to the server before the browser round-trip begins, so this
+// uses a working fake OpenBao and simply never visits the auth URL (OpenURL
+// does nothing) — the blocking point under test is the same s.serve(ctx) both
+// flows share.
+func TestOIDCReturnsPromptlyOnContextCancellation(t *testing.T) {
+	bao := fakeBao(t, func(redirect string) string { return redirect + "?code=abc&state=xyz" })
+	defer bao.Close()
+
+	cfg := OIDCConfig{
+		Addr: bao.URL, Mount: "oidc", CallbackPort: 0, Timeout: time.Minute,
+		OpenURL: func(string) error { return nil }, // browser never comes back
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := OIDC(ctx, cfg)
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Errorf("OIDC took %v after cancellation, want well under the 1-minute timeout", elapsed)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
 
