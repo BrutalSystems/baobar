@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Sign in to OpenBao</title>
+<body style="font:16px system-ui;padding:3rem;max-width:22rem;margin:auto">
+<h1 style="font-size:1.25rem">Sign in to OpenBao</h1>
+{{if .Error}}<p style="color:#c0392b" role="alert">{{.Error}}</p>{{end}}
+<form method="post" autocomplete="off">
+  <label style="display:block;margin:.75rem 0 .25rem">Username</label>
+  <input name="username" value="{{.Username}}" autocomplete="off" required
+         style="width:100%;padding:.5rem;box-sizing:border-box">
+  <label style="display:block;margin:.75rem 0 .25rem">Password</label>
+  <input name="password" type="password" autocomplete="off" required
+         style="width:100%;padding:.5rem;box-sizing:border-box">
+  <label style="display:block;margin:.75rem 0 .25rem">TOTP code</label>
+  <input name="passcode" inputmode="numeric" autocomplete="off"
+         style="width:100%;padding:.5rem;box-sizing:border-box">
+  <button type="submit" style="margin-top:1rem;padding:.5rem 1rem">Sign in</button>
+</form>
+<p style="color:#666;font-size:.85rem;margin-top:1.5rem">
+  This page is served by Baobar on your own machine and closes when you are signed in.
+</p>
