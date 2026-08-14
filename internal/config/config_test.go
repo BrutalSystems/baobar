@@ -151,24 +151,75 @@ func TestLoadAuthFromEnv(t *testing.T) {
 	}
 }
 
+// File settings take precedence over environment variables for auth config.
+func TestLoadAuthFileBeatsEnv(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(p, []byte(`addr = "https://bao.example.com"
+oidc_mount = "jwt"
+oidc_role = "file-role"
+userpass_mount = "up-file"
+callback_port = "8300"
+username = "userpass-dev"
+`), 0o600)
+
+	c, err := Load(p, env(map[string]string{
+		"VAULT_ADDR":            "https://conflicting.example.com",
+		"BAOBAR_OIDC_MOUNT":     "env-oidc",
+		"BAOBAR_OIDC_ROLE":      "env-role",
+		"BAOBAR_USERPASS_MOUNT": "env-up",
+		"BAOBAR_CALLBACK_PORT":  "8251",
+		"BAOBAR_USERNAME":       "env-user",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.OIDCMount != "jwt" {
+		t.Errorf("OIDCMount = %q, want jwt (file value)", c.OIDCMount)
+	}
+	if c.OIDCRole != "file-role" {
+		t.Errorf("OIDCRole = %q, want file-role (file value)", c.OIDCRole)
+	}
+	if c.UserpassMount != "up-file" {
+		t.Errorf("UserpassMount = %q, want up-file (file value)", c.UserpassMount)
+	}
+	if c.CallbackPort != 8300 {
+		t.Errorf("CallbackPort = %d, want 8300 (file value)", c.CallbackPort)
+	}
+	if c.Username != "userpass-dev" {
+		t.Errorf("Username = %q, want userpass-dev (file value)", c.Username)
+	}
+}
+
 // Mounts are interpolated into request paths, so anything that could escape a
 // single path segment is rejected at the boundary.
 func TestLoadRejectsUnsafeMounts(t *testing.T) {
 	// An EMPTY mount is not invalid — it means "use the default" and is
 	// resolved before validation ever sees it. Only malformed values are here.
-	for _, bad := range []string{"oidc/../sys", "oidc/x", "oi dc", "oidc?x=1", "oidc#f", "."} {
+	badMounts := []string{"oidc/../sys", "oidc/x", "oi dc", "oidc?x=1", "oidc#f", "."}
+
+	for _, bad := range badMounts {
 		_, err := Load("", env(map[string]string{
 			"VAULT_ADDR":        "https://bao.example.com",
 			"BAOBAR_OIDC_MOUNT": bad,
 		}))
 		if !errors.Is(err, ErrBadMount) {
-			t.Errorf("mount %q: err = %v, want ErrBadMount", bad, err)
+			t.Errorf("OIDC mount %q: err = %v, want ErrBadMount", bad, err)
+		}
+	}
+
+	for _, bad := range badMounts {
+		_, err := Load("", env(map[string]string{
+			"VAULT_ADDR":            "https://bao.example.com",
+			"BAOBAR_USERPASS_MOUNT": bad,
+		}))
+		if !errors.Is(err, ErrBadMount) {
+			t.Errorf("Userpass mount %q: err = %v, want ErrBadMount", bad, err)
 		}
 	}
 }
 
 func TestLoadRejectsBadCallbackPort(t *testing.T) {
-	for _, bad := range []string{"0", "70000", "-1", "http"} {
+	for _, bad := range []string{"0", "70000", "65536", "-1", "http"} {
 		_, err := Load("", env(map[string]string{
 			"VAULT_ADDR":           "https://bao.example.com",
 			"BAOBAR_CALLBACK_PORT": bad,
@@ -176,5 +227,18 @@ func TestLoadRejectsBadCallbackPort(t *testing.T) {
 		if err == nil {
 			t.Errorf("port %q: expected an error", bad)
 		}
+	}
+}
+
+func TestLoadAcceptsValidCallbackPort(t *testing.T) {
+	c, err := Load("", env(map[string]string{
+		"VAULT_ADDR":           "https://bao.example.com",
+		"BAOBAR_CALLBACK_PORT": "65535",
+	}))
+	if err != nil {
+		t.Fatalf("port 65535: expected no error, got %v", err)
+	}
+	if c.CallbackPort != 65535 {
+		t.Errorf("CallbackPort = %d, want 65535", c.CallbackPort)
 	}
 }
