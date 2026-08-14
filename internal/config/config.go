@@ -29,9 +29,9 @@ var (
 	ErrRecheckTooLow = fmt.Errorf("recheck below the %s minimum", MinRecheck)
 
 	// Allowlists for URL components
-	dnsHostRe = regexp.MustCompile(`^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::[0-9]{1,5})?$`)
+	dnsHostRe  = regexp.MustCompile(`^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::[0-9]{1,5})?$`)
 	ipv6HostRe = regexp.MustCompile(`^\[[0-9A-Fa-f:.]+\](?::[0-9]{1,5})?$`)
-	pathRe = regexp.MustCompile(`^[A-Za-z0-9._~/-]*$`)
+	pathRe     = regexp.MustCompile(`^[A-Za-z0-9._~/-]*$`)
 )
 
 // Config holds settings only. File paths come from DefaultPaths and are passed

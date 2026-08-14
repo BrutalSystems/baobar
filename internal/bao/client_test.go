@@ -131,8 +131,8 @@ func TestRevokeSelf(t *testing.T) {
 // Non-auth status codes must NOT be reported as ErrForbidden.
 func TestDoStatusCodeDistinction(t *testing.T) {
 	tests := []struct {
-		name   string
-		status int
+		name        string
+		status      int
 		isForbidden bool
 	}{
 		{"500", http.StatusInternalServerError, false},
