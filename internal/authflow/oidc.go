@@ -61,7 +61,7 @@ func OIDC(ctx context.Context, cfg OIDCConfig) (string, error) {
 		return "", err
 	}
 
-	s, err := newSession(cfg.CallbackPort, cfg.Timeout)
+	s, err := newLoopbackSession(cfg.CallbackPort, cfg.Timeout)
 	if err != nil {
 		return "", &ConfigProblem{Detail: fmt.Sprintf(
 			"cannot listen on port %d for the login redirect; it must be free, "+

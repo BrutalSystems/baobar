@@ -312,6 +312,157 @@ func TestSessionRefusesAnOccupiedPort(t *testing.T) {
 
 // Only one flow at a time: two browser windows racing to write the token file
 // is not a state worth supporting.
+// newLoopbackSession's baseURL must name the host "localhost" — not an IP
+// literal — since that's the redirect URI form allow-listed on both the
+// OIDC role and the identity provider's app registration. The port must
+// still match whatever was actually bound (relevant when port is 0).
+func TestNewLoopbackSessionBaseURLUsesLocalhost(t *testing.T) {
+	s, err := newLoopbackSession(0, time.Minute)
+	if err != nil {
+		t.Fatalf("newLoopbackSession: %v", err)
+	}
+	go s.finish("", nil)
+	defer s.serve(context.Background())
+
+	_, wantPort, err := net.SplitHostPort(s.ln.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort: %v", err)
+	}
+
+	base := strings.TrimPrefix(s.baseURL(), "http://")
+	host, port, err := net.SplitHostPort(base)
+	if err != nil {
+		t.Fatalf("SplitHostPort(%q): %v", base, err)
+	}
+	if host != "localhost" {
+		t.Errorf("baseURL host = %q, want localhost", host)
+	}
+	if port != wantPort {
+		t.Errorf("baseURL port = %q, want %q", port, wantPort)
+	}
+}
+
+// A request that actually arrives over [::1] — with a Host header naming
+// [::1] and the right port — must reach the handler: newLoopbackSession's
+// whole point is that the IPv6 loopback address is ours too, not just
+// occupied to keep someone else off it.
+func TestLoopbackSessionAcceptsIPv6Host(t *testing.T) {
+	s, err := newLoopbackSession(0, time.Minute)
+	if err != nil {
+		t.Fatalf("newLoopbackSession: %v", err)
+	}
+	if len(s.extra) == 0 {
+		t.Skip("host has no usable IPv6 loopback; nothing to test")
+	}
+	var reached atomic.Bool
+	s.handle("/x", func(w http.ResponseWriter, r *http.Request) {
+		reached.Store(true)
+		s.finish("ok", nil)
+	})
+
+	_, port, err := net.SplitHostPort(s.ln.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort: %v", err)
+	}
+	go func() {
+		req, _ := http.NewRequest(http.MethodGet, "http://"+s.extra[0].Addr().String()+"/x", nil)
+		req.Host = net.JoinHostPort("::1", port)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			s.finish("", err)
+			return
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("status = %d, want 200", resp.StatusCode)
+		}
+	}()
+	if _, err := s.serve(context.Background()); err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	if !reached.Load() {
+		t.Error("handler did not run for a request over [::1] with a matching Host")
+	}
+}
+
+// The same request over [::1] but naming the wrong port must be refused,
+// exactly like the 127.0.0.1/localhost case already covered above.
+func TestLoopbackSessionRejectsIPv6WrongPort(t *testing.T) {
+	s, err := newLoopbackSession(0, time.Minute)
+	if err != nil {
+		t.Fatalf("newLoopbackSession: %v", err)
+	}
+	if len(s.extra) == 0 {
+		t.Skip("host has no usable IPv6 loopback; nothing to test")
+	}
+	var reached atomic.Bool
+	s.handle("/x", func(w http.ResponseWriter, r *http.Request) { reached.Store(true) })
+
+	go func() {
+		req, _ := http.NewRequest(http.MethodGet, "http://"+s.extra[0].Addr().String()+"/x", nil)
+		req.Host = "[::1]:1" // deliberately not our listener's port
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			if resp.StatusCode != http.StatusForbidden {
+				t.Errorf("status = %d, want 403", resp.StatusCode)
+			}
+			resp.Body.Close()
+		}
+		s.finish("done", nil)
+	}()
+	s.serve(context.Background())
+
+	if reached.Load() {
+		t.Error("handler ran for a request over [::1] naming the wrong port")
+	}
+}
+
+// This is the test that proves no listener leaks: after serve() returns,
+// BOTH addresses newLoopbackSession bound — 127.0.0.1 and [::1] — must
+// actually stop accepting connections, not just the one Go's http.Server
+// happened to be told about first.
+func TestLoopbackSessionShutsDownBothListeners(t *testing.T) {
+	s, err := newLoopbackSession(0, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("newLoopbackSession: %v", err)
+	}
+	addr4 := s.ln.Addr().String()
+	_, port, err := net.SplitHostPort(addr4)
+	if err != nil {
+		t.Fatalf("SplitHostPort: %v", err)
+	}
+	addr6 := net.JoinHostPort("::1", port)
+
+	if _, err := s.serve(context.Background()); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
+	}
+
+	if conn, err := net.DialTimeout("tcp", addr4, time.Second); err == nil {
+		conn.Close()
+		t.Error("127.0.0.1 listener still accepting connections after serve() returned")
+	}
+	if conn, err := net.DialTimeout("tcp", addr6, time.Second); err == nil {
+		conn.Close()
+		t.Error("[::1] listener still accepting connections after serve() returned")
+	}
+}
+
+// If [::1]:port is already held by another process, that's the squatting
+// scenario newLoopbackSession exists to close — it must fail outright
+// rather than quietly proceeding on 127.0.0.1 alone.
+func TestNewLoopbackSessionRefusesWhenIPv6IsHeld(t *testing.T) {
+	held, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skip("host has no usable IPv6 loopback; skipping")
+	}
+	defer held.Close()
+	port := held.Addr().(*net.TCPAddr).Port
+
+	if _, err := newLoopbackSession(port, time.Minute); err == nil {
+		t.Fatal("expected an error when [::1]:port is already held by another listener")
+	}
+}
+
 func TestSingleFlight(t *testing.T) {
 	if !acquire() {
 		t.Fatal("first acquire failed")
