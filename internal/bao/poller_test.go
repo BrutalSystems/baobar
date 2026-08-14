@@ -603,3 +603,31 @@ func TestStatusStampsTheCacheWithItsServer(t *testing.T) {
 		t.Errorf("cache Addr = %q, want %q", c.Addr, testAddr)
 	}
 }
+
+// The degraded fallback must be scoped to the server too. Otherwise an
+// unreachable server would still surface a different server's identity and
+// countdown — the same misreport as before, just with a dimmed icon.
+func TestStatusDegradedFallbackIgnoresOtherServersCache(t *testing.T) {
+	now := time.Unix(10_000, 0)
+	l := &fakeLookuper{err: errors.New("dial tcp: connection refused")}
+	p, tokenPath, cachePath := newPoller(t, l, now)
+	stamp := writeToken(t, tokenPath, "hvs.abc")
+
+	SaveCache(cachePath, Cache{
+		Addr: "https://other.example.com", CheckedAt: 1,
+		ExpiresAt: 10_000 + int64(6*time.Hour/time.Second),
+		Name:      "userpass-dev", Token: stamp,
+	})
+
+	got := p.Status(context.Background())
+
+	if got.State != StateDegraded {
+		t.Errorf("State = %v, want degraded", got.State)
+	}
+	if got.Name == "userpass-dev" {
+		t.Error("degraded fallback served the other server's identity")
+	}
+	if got.Remaining != 0 {
+		t.Errorf("Remaining = %v, want 0 — there is no countdown for THIS server", got.Remaining)
+	}
+}
