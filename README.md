@@ -61,10 +61,15 @@ refused); and the misconfiguration path names both the problem and the config fi
 That pass found one bug that made the app invisible on Windows — the tray icon was PNG,
 which `systray` accepts only on macOS and Linux — fixed in v0.1.1.
 
+**Verified on Ubuntu 24.04:** the tray item appears on **XFCE** with no extra packages —
+`fyne.io/systray`'s pure-Go D-Bus StatusNotifierItem path works, with no cgo, no GTK and no
+appindicator libraries. On **GNOME** it appears only once the AppIndicator extension is
+enabled; see [Linux](#linux) below, because a GNOME user who skips that step sees nothing at
+all. First-run setup, the menu, and the tooltip were exercised on both.
+
 **Not verified:**
 
-- The **Linux binary has never been run.** It cross-compiles and its tests pass in CI, but
-  whether the tray item actually appears over D-Bus is unknown.
+- **`linux_arm64`** ships but has never been run; the `amd64` build has (see below).
 - **`windows_arm64`** is published but has never been run on Windows-on-ARM hardware. AWS
   offers no Windows-on-ARM instances, so the Windows pass above could not cover it.
 - The macOS **"Start at login" checkbox has never been clicked in the tray.** The bug behind
@@ -191,6 +196,35 @@ Windows binaries are not yet Authenticode-signed
 ([#11](https://github.com/BrutalSystems/baobar/issues/11)), so SmartScreen may warn the
 first time you run one. `windows_arm64` is published but has never been run on
 Windows-on-ARM hardware.
+
+### Linux
+
+Download `baobar_<version>_linux_amd64.tar.gz` from
+[the latest release](https://github.com/BrutalSystems/baobar/releases/latest), extract it,
+and put the binary somewhere permanent — **not** `/tmp`, which "Start at login" refuses by
+design because the OS empties it.
+
+```sh
+tar xzf baobar_*_linux_amd64.tar.gz
+mkdir -p ~/bin && mv baobar ~/bin/ && chmod +x ~/bin/baobar
+~/bin/baobar
+```
+
+**On GNOME you must enable the AppIndicator extension, or Baobar will be invisible.**
+GNOME Shell dropped legacy tray support, and StatusNotifierItem reaches it only through
+that extension. Baobar runs perfectly well without it — you simply cannot see it, which
+looks identical to the app being broken.
+
+```sh
+gnome-extensions enable ubuntu-appindicators@ubuntu.com
+```
+
+Then log out and back in. On Ubuntu the extension is installed already; it is enabling it
+that matters. Other desktops — XFCE, KDE, Cinnamon, MATE — support StatusNotifierItem
+natively and need nothing.
+
+Verified on Ubuntu 24.04 under both XFCE and GNOME. `linux_arm64` is published but has
+never been run.
 
 ### Download a release
 
@@ -320,7 +354,7 @@ same freshness you already have.
 |---|---|---|
 | macOS | `go build -o baobar ./cmd/baobar` | native build only; not cross-compiled from Windows or Linux |
 | Windows | `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o dist/baobar.exe ./cmd/baobar` | cross-compiles cleanly from macOS: pure-Go syscalls, no cgo. `-H=windowsgui` suppresses the console window that would otherwise flash on launch |
-| Linux | `GOOS=linux GOARCH=amd64 go build -o dist/baobar-linux ./cmd/baobar` | also cross-compiles cleanly from macOS as of `fyne.io/systray` v1.12.2, which talks to the tray over D-Bus (`StatusNotifierItem`) in pure Go rather than linking GTK/appindicator via cgo. No `gcc`/`libgtk-3-dev`/`libayatana-appindicator3-dev` were needed to produce the binary used here. That build has not yet been *run* on a Linux desktop, so treat "the tray actually appears" as unverified rather than "impossible without cgo" — if a future systray version reintroduces a cgo path, `apt-get install gcc libgtk-3-dev libayatana-appindicator3-dev` is the fallback for building on/for Linux |
+| Linux | `GOOS=linux GOARCH=amd64 go build -o dist/baobar-linux ./cmd/baobar` | also cross-compiles cleanly from macOS as of `fyne.io/systray` v1.12.2, which talks to the tray over D-Bus (`StatusNotifierItem`) in pure Go rather than linking GTK/appindicator via cgo. No `gcc`/`libgtk-3-dev`/`libayatana-appindicator3-dev` were needed to produce the binary used here. That binary has now been **run** on Ubuntu 24.04 under XFCE and GNOME, confirming the pure-Go D-Bus path works — if a future systray version reintroduces a cgo path, `apt-get install gcc libgtk-3-dev libayatana-appindicator3-dev` is the fallback for building on/for Linux |
 
 The **Windows `amd64`** binary has now been run on real hardware (Windows Server 2022): the
 tray icon, SSO login in a browser, the token being picked up by the `bao` CLI, registry
@@ -329,10 +363,10 @@ pass found the PNG-versus-ICO tray icon bug, which no amount of cross-compiling 
 surfaced. **`windows_arm64` has still never been run** — AWS has no Windows-on-ARM
 instances, so it was not covered.
 
-The **Linux** binary still has **not been run** on a Linux desktop. Compiling is not
-verifying: whether the tray item appears at all depends on a session bus and a
-StatusNotifierItem-capable desktop, and that remains an open item
-([#5](https://github.com/BrutalSystems/baobar/issues/5)).
+The **Linux** binary has been run on Ubuntu 24.04, under both XFCE and GNOME. The tray item
+appears natively on XFCE; on GNOME it needs the AppIndicator extension enabled, which is
+the single most likely reason a Linux user will think Baobar is broken — see
+[Linux](#linux). `linux_arm64` ships but has never been run.
 
 ## Platform notes
 
