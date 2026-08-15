@@ -95,7 +95,7 @@ Regenerate with `go run ./tools/genicons`.
 
 - LICENSE is MIT, copyright "Mike Williams" taken from git authorship — **change it if the
   intended holder is an entity.**
-- No GitHub remote exists yet. The module path is `github.com/brutalsystems/baobar`; if the
+- No GitHub remote exists yet. The module path is `github.com/BrutalSystems/baobar`; if the
   org differs, `go mod edit -module` before the first push.
 - goreleaser → GitHub Releases, then a Homebrew cask. **macOS signing and notarization is
   the first real chore** — an unsigned tray app is a bad first impression and it needs an

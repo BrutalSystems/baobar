@@ -1,4 +1,4 @@
-module github.com/brutalsystems/baobar
+module github.com/BrutalSystems/baobar
 
 go 1.26.3
 

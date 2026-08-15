@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: false
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # The race detector needs a C toolchain. macOS and Linux runners have one;
+      # on Windows it is not worth the setup, so that platform runs the suite
+      # without -race. The point of the Windows job is that the tests execute
+      # there at all — several bugs in this codebase were Windows-only
+      # (cmd.exe re-parsing a URL at '&'; syscall.EADDRINUSE being a fabricated
+      # placeholder that made an IPv6 bind check dead code).
+      - name: Test (race)
+        if: runner.os != 'Windows'
+        run: go test -race -count=1 ./...
+
+      - name: Test
+        if: runner.os == 'Windows'
+        run: go test -count=1 ./...
+
+  lint:
+    name: formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+  cross-build:
+    name: cross-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Proves the binary still builds for every target from one host, which is
+      # how releases are cut. Windows needs -H=windowsgui or a console window
+      # flashes on launch.
+      - name: darwin/arm64
+        run: GOOS=darwin GOARCH=arm64 go build -o /dev/null ./cmd/baobar
+      - name: windows/amd64
+        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o /dev/null ./cmd/baobar
+      - name: linux/amd64
+        run: GOOS=linux GOARCH=amd64 go build -o /dev/null ./cmd/baobar

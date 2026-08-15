@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brutalsystems/baobar/internal/bao"
+	"github.com/BrutalSystems/baobar/internal/bao"
 )
 
 // Human formats a countdown as 6h19m or 22m, never negative.

@@ -5,7 +5,7 @@ import (
 	"image/png"
 	"testing"
 
-	"github.com/brutalsystems/baobar/internal/bao"
+	"github.com/BrutalSystems/baobar/internal/bao"
 )
 
 // silhouette reduces an icon to which pixels are inked, discarding colour

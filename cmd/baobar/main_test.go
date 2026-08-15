@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brutalsystems/baobar/internal/authflow"
+	"github.com/BrutalSystems/baobar/internal/authflow"
 )
 
 // interpreters that re-parse their command line: passing an OIDC auth_url as

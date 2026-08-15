@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brutalsystems/baobar/internal/bao"
+	"github.com/BrutalSystems/baobar/internal/bao"
 )
 
 func TestHuman(t *testing.T) {

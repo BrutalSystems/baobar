@@ -1,5 +1,11 @@
 # Baobar M2 (Terminal-Free Login + Autostart) Implementation Plan
 
+> **Historical record.** This is the implementation plan as written before the work began.
+> It is kept because the reasoning is useful, but its code listings are a *snapshot of the
+> intent*, not of the shipped source — several were corrected during implementation and
+> review. Always trust the code and the tests over this document. See `docs/NEXT.md` for
+> current state.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Log in to OpenBao from the tray without ever opening a terminal or needing the `bao` CLI, and add a working "Start at login" toggle.
@@ -20,7 +26,7 @@ Every task's requirements implicitly include this section.
 - **Never invoke the `bao` CLI.** Not for status, not for login. After this milestone the binary has no dependency on it.
 - **Baobar is launched by double-click**, so nothing may write to stderr and exit — failures surface in the tray via `Alert`.
 - **`Poller.Status` is only ever called from the tray's poll goroutine.** Auth flows run on their own goroutines and signal completion through the existing refresh channel.
-- Go 1.26.3 (pinned in `.tool-versions`); module `github.com/brutalsystems/baobar`.
+- Go 1.26.3 (pinned in `.tool-versions`); module `github.com/BrutalSystems/baobar`.
 
 ---
 

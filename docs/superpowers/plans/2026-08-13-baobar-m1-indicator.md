@@ -1,5 +1,11 @@
 # Baobar M1 (Indicator) Implementation Plan
 
+> **Historical record.** This is the implementation plan as written before the work began.
+> It is kept because the reasoning is useful, but its code listings are a *snapshot of the
+> intent*, not of the shipped source — several were corrected during implementation and
+> review. Always trust the code and the tests over this document. See `docs/NEXT.md` for
+> current state.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship a cross-platform tray app that shows OpenBao login state and a live token
@@ -24,7 +30,7 @@ Every task's requirements implicitly include this section.
 
 - **Go 1.26.3**, pinned via a project `.tool-versions` (asdf). Without it, `go` fails with
   "No version is set for command go" in this workspace.
-- **Module path:** `github.com/brutalsystems/baobar`. *Assumption* — the GitHub org was never
+- **Module path:** `github.com/BrutalSystems/baobar`. *Assumption* — the GitHub org was never
   confirmed. If it differs, run `go mod edit -module github.com/<org>/baobar` before the
   first push; nothing else in the plan depends on it.
 - **The systray code below was written against the `getlantern/systray` API** (`Run`,
@@ -132,7 +138,7 @@ existing `.gitignore` entries — append to them.
 ```bash
 printf 'golang 1.26.3\n' > .tool-versions
 printf 'baobar\nbaobar.exe\ndist/\n' >> .gitignore
-go mod init github.com/brutalsystems/baobar
+go mod init github.com/BrutalSystems/baobar
 go get github.com/BurntSushi/toml
 go version   # must print go1.26.3
 ```
@@ -1795,7 +1801,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brutalsystems/baobar/internal/bao"
+	"github.com/BrutalSystems/baobar/internal/bao"
 )
 
 func TestHuman(t *testing.T) {
@@ -1992,7 +1998,7 @@ package tray
 import (
 	_ "embed"
 
-	"github.com/brutalsystems/baobar/internal/bao"
+	"github.com/BrutalSystems/baobar/internal/bao"
 )
 
 // Icons are embedded so the binary has no runtime asset dependency. Regenerate
@@ -2037,7 +2043,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brutalsystems/baobar/internal/bao"
+	"github.com/BrutalSystems/baobar/internal/bao"
 )
 
 // Human formats a countdown as 6h19m or 22m, never negative.
@@ -2387,7 +2393,7 @@ import (
 
 	"fyne.io/systray"
 
-	"github.com/brutalsystems/baobar/internal/bao"
+	"github.com/BrutalSystems/baobar/internal/bao"
 )
 
 type Options struct {
@@ -2656,11 +2662,11 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/brutalsystems/baobar/internal/bao"
-	"github.com/brutalsystems/baobar/internal/config"
-	"github.com/brutalsystems/baobar/internal/login"
-	"github.com/brutalsystems/baobar/internal/notify"
-	"github.com/brutalsystems/baobar/internal/tray"
+	"github.com/BrutalSystems/baobar/internal/bao"
+	"github.com/BrutalSystems/baobar/internal/config"
+	"github.com/BrutalSystems/baobar/internal/login"
+	"github.com/BrutalSystems/baobar/internal/notify"
+	"github.com/BrutalSystems/baobar/internal/tray"
 )
 
 func main() {

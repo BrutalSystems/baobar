@@ -3,7 +3,7 @@ package tray
 import (
 	_ "embed"
 
-	"github.com/brutalsystems/baobar/internal/bao"
+	"github.com/BrutalSystems/baobar/internal/bao"
 )
 
 // Icons are embedded so the binary has no runtime asset dependency. Regenerate

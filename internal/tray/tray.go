@@ -8,8 +8,8 @@ import (
 
 	"fyne.io/systray"
 
-	"github.com/brutalsystems/baobar/internal/authflow"
-	"github.com/brutalsystems/baobar/internal/bao"
+	"github.com/BrutalSystems/baobar/internal/authflow"
+	"github.com/BrutalSystems/baobar/internal/bao"
 )
 
 type Options struct {

@@ -1,5 +1,7 @@
 # Baobar
 
+[![CI](https://github.com/BrutalSystems/baobar/actions/workflows/ci.yml/badge.svg)](https://github.com/BrutalSystems/baobar/actions/workflows/ci.yml)
+
 A menu bar / system tray indicator for [OpenBao](https://openbao.org): shows whether you
 are signed in and how long your token has left, everywhere a shell-script plugin can't
 (Windows has no menu-bar-script host). macOS, Windows, and Linux.
@@ -255,6 +257,13 @@ scheme, and the redirect-URI subtlety documented above:
 
 Not yet built, by design: token renewal, refined artwork, goreleaser, a Homebrew cask,
 signing and notarization.
+
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). It is mostly a list of
+the invariants that are easy to break by accident, each of which has a real failure behind
+it. [`docs/NEXT.md`](docs/NEXT.md) has the current outstanding work; the platform-verification
+items are good places to start.
 
 ## License
 

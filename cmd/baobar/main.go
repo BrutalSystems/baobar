@@ -10,12 +10,12 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/brutalsystems/baobar/internal/authflow"
-	"github.com/brutalsystems/baobar/internal/autostart"
-	"github.com/brutalsystems/baobar/internal/bao"
-	"github.com/brutalsystems/baobar/internal/config"
-	"github.com/brutalsystems/baobar/internal/notify"
-	"github.com/brutalsystems/baobar/internal/tray"
+	"github.com/BrutalSystems/baobar/internal/authflow"
+	"github.com/BrutalSystems/baobar/internal/autostart"
+	"github.com/BrutalSystems/baobar/internal/bao"
+	"github.com/BrutalSystems/baobar/internal/config"
+	"github.com/BrutalSystems/baobar/internal/notify"
+	"github.com/BrutalSystems/baobar/internal/tray"
 )
 
 func main() {
