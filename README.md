@@ -268,3 +268,10 @@ items are good places to start.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Baobar's binaries bundle third-party open-source components, all permissively
+licensed (Apache-2.0, MIT, ISC, BSD-2/3). Their notices are reproduced in
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), which ships inside every
+release archive; regenerate it with `tools/gen-third-party-licenses.sh`.
+
+Security issues: see [SECURITY.md](SECURITY.md).
