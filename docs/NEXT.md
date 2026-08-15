@@ -42,9 +42,15 @@ platform. See the top of the recommendations below.
 
 ### 1. Run the Windows binary — highest expected yield
 
-Windows is the platform the product exists for (the whole thesis is that Windows has no
-SwiftBar-style host and no `bao` CLI), and it is the platform least exercised. Two things
+Windows is the platform the product exists for (the thesis is that Windows has no
+SwiftBar-style menu-bar-script host), and it is the platform least exercised. Two things
 there are untested at runtime and were both wrong at some point in development:
+
+An earlier version of this line also claimed Windows has no `bao` CLI. That was wrong.
+OpenBao publishes `windows_amd64` and `windows_arm64` binaries, and there is a Chocolatey
+package (`choco install openbao`, lagging upstream at the time of writing). The product
+rationale is unaffected — it rests on the absence of a menu-bar-script host, which is
+still true — but the claim was false and this file is meant to be the honest status.
 
 - **Browser launch.** `browserCommand` uses `rundll32 url.dll,FileProtocolHandler`. The
   original `cmd /c start` truncated OIDC URLs at the first `&`, because `cmd.exe` re-parses
