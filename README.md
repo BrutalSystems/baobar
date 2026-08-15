@@ -58,8 +58,8 @@ which `systray` accepts only on macOS and Linux — fixed in v0.1.1.
   offers no Windows-on-ARM instances, so the Windows pass above could not cover it.
 - The macOS **"Start at login" checkbox has never been clicked in the tray.** The bug behind
   it was found and fixed against a real stale LaunchAgent, but not through the UI.
-- **Release binaries are unsigned.** See [Install](#install) — this currently breaks the
-  Homebrew path on macOS.
+- **Windows and Linux binaries are unsigned.** macOS is signed and notarized as of v0.1.2;
+  the other two platforms are not, so Windows SmartScreen may warn on first run.
 
 See [Build matrix](#build-matrix) for what has and has not been exercised per platform.
 Build, run, and test are three different claims, and this section tries to keep them apart.
@@ -125,12 +125,6 @@ exchange rather than returning a token.
 
 ## Install
 
-> **macOS: release binaries are not signed or notarized yet.** Gatekeeper raises a dialog
-> whose prominent action is *Move to Trash*; taking it deletes the binary and leaves a
-> Homebrew install that reports success but is broken. Until notarization lands
-> ([#10](https://github.com/BrutalSystems/baobar/issues/10)), **building from source is the
-> reliable path on macOS.**
-
 ### Homebrew
 
 ```bash
@@ -139,14 +133,16 @@ brew trust brutalsystems/tap    # Homebrew refuses casks from untrusted third-pa
 brew install --cask baobar
 ```
 
-On macOS the binary is quarantined on download and must be released before it will run:
+macOS binaries are signed with a Developer ID and notarized by Apple as of v0.1.2, so this
+just works — no Gatekeeper dialog and no `xattr` incantation. Verify it yourself if you
+like:
 
 ```bash
-xattr -d com.apple.quarantine "$(brew --prefix)/bin/baobar"
+codesign --test-requirement="=notarized" -vv "$(brew --prefix)/bin/baobar"
 ```
 
-If Gatekeeper already moved it to the Trash, restore it from there or
-`brew reinstall --cask baobar`, then run the command above **before** launching it.
+If you are on v0.1.1 or earlier, upgrade — those binaries were unsigned, and Gatekeeper
+offered to move them to the Trash.
 
 ### Download a release
 
