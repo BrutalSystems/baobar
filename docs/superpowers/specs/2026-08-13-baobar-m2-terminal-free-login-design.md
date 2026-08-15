@@ -85,7 +85,13 @@ function values, exactly as it already wires logout.
 Both flows are the same shape: open a browser, wait for the browser to come back, write a
 token. That shape is the package's core and is written once.
 
-- Binds **127.0.0.1 only**. Never `0.0.0.0`.
+- Binds **loopback only** — never `0.0.0.0`, never `[::]`. The OIDC session binds BOTH
+  `127.0.0.1:<port>` and `[::1]:<port>`; see the OIDC flow below for why. If the IPv6
+  address cannot be secured for a reason other than the host lacking IPv6, the session
+  fails rather than proceeding with half the pair. The check is an allowlist of the errnos
+  that genuinely mean "no IPv6 here" — enumerating the safe cases rather than the fatal
+  ones, because `syscall.EADDRINUSE` is a fabricated placeholder on Windows (the real
+  Winsock error is 10048), so a blocklist would fail OPEN there.
 - Serves exactly one flow. A second attempt while one is live is refused, and the menu
   item is disabled for the duration.
 - Shuts down on success, on failure, or after a **5-minute timeout**, whichever comes
@@ -100,13 +106,20 @@ keeps working unchanged.
 
 1. Generate a `client_nonce` (32 bytes, crypto/rand, hex).
 2. `POST /v1/auth/<oidc_mount>/oidc/auth_url` with
-   `{"role": <oidc_role>, "redirect_uri": "http://127.0.0.1:<callback_port>/oidc/callback",
-   "client_nonce": <nonce>}` → `data.auth_url`. The redirect URI uses the **IP address**
-   `127.0.0.1`, not the hostname `localhost`: the listener below binds IPv4 loopback only,
-   and `localhost` can resolve to `::1` first on a machine with IPv6 enabled, which would
-   send the callback to a different (and possibly unbound, or worse, someone else's)
-   listener instead of this one. A role whose allowed redirect URIs list only the
-   `localhost` form needs the `127.0.0.1` variant added.
+   `{"role": <oidc_role>, "redirect_uri": "http://localhost:<callback_port>/oidc/callback",
+   "client_nonce": <nonce>}` → `data.auth_url`. The redirect URI uses the hostname
+   **`localhost`**, matching what the `bao` CLI sends, so a role and an app registration
+   that already work with the CLI need no change.
+
+   **Corrected 2026-08-15, after a live failure.** This originally specified the IP form
+   `127.0.0.1`, reasoning that `localhost` may resolve to `::1` and the listener bound IPv4
+   only. That reasoning was sound but the remedy was wrong: the redirect URI must be
+   allow-listed in TWO systems — the OpenBao role and the identity provider's app
+   registration — and a live attempt was rejected by Entra (AADSTS50011) after the role had
+   already been fixed. Requiring a change in both, one of which the user may not control,
+   is a worse trade than holding both addresses. The listener now binds `127.0.0.1` AND
+   `[::1]`, so whichever the browser resolves, Baobar is listening and nothing else can
+   occupy the other.
 3. Start the listener on `callback_port` (default **8250**) with a `/oidc/callback` route.
 4. Open the system browser at `auth_url`.
 5. The provider redirects back with `state` and `code`.

@@ -171,3 +171,57 @@ func TestRunLoginSuccessWritesTokenForcesAndNeverAlerts(t *testing.T) {
 		t.Errorf("alerts = %v, want none on success", f.alerts)
 	}
 }
+
+// A configuration failure the server described — an unauthorized redirect URI
+// is the likely first-run case — must reach the user, not be flattened into
+// "Login did not complete." That message told the user nothing actionable.
+func TestRunLoginSurfacesAConfigProblem(t *testing.T) {
+	var alerts []string
+	deps := loginDeps{
+		oidc: func(ctx context.Context, _ authflow.OIDCConfig) (string, error) {
+			return "", &authflow.ConfigProblem{
+				Detail: "unauthorized redirect_uri: http://127.0.0.1:8250/oidc/callback",
+				Status: 400,
+			}
+		},
+		alert:      func(title, msg string) { alerts = append(alerts, title+": "+msg) },
+		writeToken: func(string) error { t.Fatal("must not write a token"); return nil },
+		force:      func() { t.Fatal("must not force a poll") },
+	}
+
+	if err := runLogin(context.Background(), "oidc", deps); err == nil {
+		t.Fatal("expected an error")
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("alerts = %v, want exactly one", alerts)
+	}
+	if !strings.Contains(alerts[0], "unauthorized redirect_uri") {
+		t.Errorf("alert = %q, want it to name the server's reason", alerts[0])
+	}
+}
+
+// Everything that is not a ConfigProblem stays generic, so no response body
+// from a credential-bearing request can reach a notification.
+func TestRunLoginKeepsOtherFailuresGeneric(t *testing.T) {
+	var alerts []string
+	deps := loginDeps{
+		oidc: func(ctx context.Context, _ authflow.OIDCConfig) (string, error) {
+			return "", errors.New("password=hunter2 leaked into an error somehow")
+		},
+		alert:      func(title, msg string) { alerts = append(alerts, title+": "+msg) },
+		writeToken: func(string) error { return nil },
+		force:      func() {},
+	}
+
+	runLogin(context.Background(), "oidc", deps)
+
+	if len(alerts) != 1 {
+		t.Fatalf("alerts = %v, want exactly one", alerts)
+	}
+	if strings.Contains(alerts[0], "hunter2") {
+		t.Errorf("alert = %q — a non-ConfigProblem error must not be surfaced", alerts[0])
+	}
+	if !strings.Contains(alerts[0], "Login did not complete") {
+		t.Errorf("alert = %q, want the generic message", alerts[0])
+	}
+}

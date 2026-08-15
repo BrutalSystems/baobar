@@ -78,7 +78,8 @@ Both login items open your default browser instead of a terminal. Baobar never i
 `bao` CLI, and does not require it to be installed, for login or anything else.
 
 - **Login with SSO** drives an OIDC flow: Baobar asks OpenBao for an authorization URL,
-  opens it in your browser, and catches the redirect on a short-lived `127.0.0.1` listener.
+  opens it in your browser, and catches the redirect on a short-lived loopback listener
+  bound to both `127.0.0.1` and `[::1]`.
   See [callback_port](#configuration) below — this is the single most likely thing to trip
   up a first run.
 - **Login with password + TOTP** opens a small form, served from that same loopback
@@ -156,13 +157,23 @@ username = ""
 | Callback port | `BAOBAR_CALLBACK_PORT` | `8250` | port Baobar listens on for the OIDC redirect — see below, this must match the role |
 | Username | `BAOBAR_USERNAME` | *(empty)* | prefills the username field on the password + TOTP form; it is never treated as a credential and never sent anywhere by itself |
 
-**`callback_port` must match the OIDC role's allowed redirect URI**, and the redirect URI
-Baobar sends is `http://127.0.0.1:<callback_port>/oidc/callback` — using the IP address
-`127.0.0.1`, not the hostname `localhost`. This is because Baobar's callback listener binds
-IPv4 loopback only, so a role whose allowed redirect URIs list only
-`http://localhost:8250/oidc/callback` needs the `127.0.0.1` variant added alongside it (or
-in place of it) before SSO login will work. This is the single most likely thing to trip up
-a first run.
+**`callback_port` must match the OIDC role's allowed redirect URI.** Baobar sends
+`http://localhost:<callback_port>/oidc/callback` — the same form the `bao` CLI uses, so a
+role and an identity-provider app registration that already work with the CLI need no
+change.
+
+That hostname is deliberate, and so is what backs it. `localhost` can resolve to either
+`127.0.0.1` or `::1`, and a listener bound to only one of them would leave the other free
+for any local process to occupy and receive your authorization code. Baobar therefore
+**binds both** `127.0.0.1:<port>` and `[::1]:<port>` for the seconds a login is in flight,
+so whichever address the browser picks, Baobar is the one listening. If either address is
+already in use, the login fails with a message saying so rather than proceeding with half
+the pair.
+
+An earlier design sent the `127.0.0.1` form instead. It was abandoned because the redirect
+URI must be allow-listed in *two* systems — the OpenBao role and the identity provider's
+app registration — and requiring a change in both, one of which is often outside your
+control, is a worse trade than simply holding both addresses.
 
 Baobar also reads and writes `~/.vault-token` (`%USERPROFILE%\.vault-token` on Windows) —
 the same file the `bao` CLI and SOPS use, for compatibility — and caches the last known
