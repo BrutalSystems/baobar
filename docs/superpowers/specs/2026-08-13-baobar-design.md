@@ -3,7 +3,12 @@
 **Status:** M1 implemented on branch `m1-indicator` — all packages unit-tested, and the app
 has been run once on macOS against a live server (the indicator, the countdown, and the
 audit-log throttle were confirmed working; the remaining manual checks are outstanding).
-M2 and M3 are not started. See the README for exactly what is and is not verified.
+The milestones below split userpass+TOTP (M2) and OIDC/SSO (M3) into two phases; that split
+was later reordered and merged into a single milestone, also called M2, covering both plus
+start-at-login — see
+[`2026-08-13-baobar-m2-terminal-free-login-design.md`](2026-08-13-baobar-m2-terminal-free-login-design.md).
+That milestone is implemented and unit-tested, but not yet exercised against a live server.
+See the README for exactly what is and is not verified.
 **Date:** 2026-08-13
 
 A cross-platform menu bar / system tray app that shows whether you are signed in to
@@ -100,7 +105,7 @@ baobar/
   cmd/baobar/main.go        wiring only: config -> poller -> tray
   internal/bao/             token state machine, API client, cache      (no UI, no CLI)
   internal/tray/            icon + menu rendering, click wiring
-  internal/login/           auth flows; writes ~/.vault-token
+  internal/authflow/        auth flows; writes ~/.vault-token (renamed from internal/login/ during M2 — see the M2 design doc)
   internal/config/          VAULT_ADDR, intervals, thresholds
   internal/notify/          desktop notifications (e.g. gen2brain/beeep)
 ```
@@ -239,6 +244,12 @@ M1 must therefore detect a missing `bao` CLI, disable the login items, say why, 
 the web UI link as the way through. Claiming M1 "solves Windows" would be overselling it:
 it solves *knowing*, not *acting*. M2 solves acting.
 
+> **Superseded.** M2 shipped browser-based login for both flows, on every platform. The
+> terminal shell-out, the `bao`-CLI dependency, and the "dead end on a bare Windows
+> machine" limitation described above no longer exist in the code. See
+> [`2026-08-13-baobar-m2-terminal-free-login-design.md`](2026-08-13-baobar-m2-terminal-free-login-design.md).
+> The reasoning above is kept for the record.
+
 Menu layout, ported from the prototype:
 
 ```
@@ -274,6 +285,12 @@ than adopting a GUI toolkit.
 Open the system browser to the authorize URL and listen on `localhost:8250/oidc/callback`
 — the same flow `bao login -method=oidc` performs internally. Exchange the code, write the
 token file.
+
+> **Superseded.** The M2/M3 split below (userpass first, OIDC second) was reordered and
+> merged into a single milestone. See
+> [`2026-08-13-baobar-m2-terminal-free-login-design.md`](2026-08-13-baobar-m2-terminal-free-login-design.md),
+> which also removes the terminal shell-out entirely rather than keeping it as M1's
+> stopgap. The reasoning below is kept for the record.
 
 ### The revisit trigger
 

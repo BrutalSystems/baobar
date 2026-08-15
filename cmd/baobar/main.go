@@ -10,9 +10,10 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/brutalsystems/baobar/internal/authflow"
+	"github.com/brutalsystems/baobar/internal/autostart"
 	"github.com/brutalsystems/baobar/internal/bao"
 	"github.com/brutalsystems/baobar/internal/config"
-	"github.com/brutalsystems/baobar/internal/login"
 	"github.com/brutalsystems/baobar/internal/notify"
 	"github.com/brutalsystems/baobar/internal/tray"
 )
@@ -45,10 +46,16 @@ func main() {
 	}
 	tracker := notify.NewTracker(30*time.Minute, 5*time.Minute)
 
+	starter, autostartErr := autostart.New()
+
+	// One alert seam, used by logout, by the login flows, and by tray.Options.
+	// M1 had this logic inline in the Options literal; the login flows need it
+	// too, so it gets a name.
+	alert := func(title, message string) { _ = notify.Send(title, message) }
+
 	tray.Run(tray.Options{
-		Addr:         cfg.Addr,
-		CLIAvailable: login.CLIAvailable(),
-		Status:       poller.Status,
+		Addr:   cfg.Addr,
+		Status: poller.Status,
 		Logout: func() error {
 			// The local session is cleared unconditionally — cache and token
 			// file both go — but a failed revoke is reported rather than
@@ -67,12 +74,46 @@ func main() {
 			}
 			return revokeErr
 		},
+		StartAtLoginEnabled: func() bool {
+			if autostartErr != nil {
+				return false
+			}
+			on, err := starter.Enabled()
+			return err == nil && on
+		},
+		ToggleStartAtLogin: func(on bool) error {
+			if autostartErr != nil {
+				return autostartErr
+			}
+			if on {
+				return starter.Enable()
+			}
+			return starter.Disable()
+		},
 		Login: func(method string) error {
-			// No explicit Force here: tray.go's kick() after this returns
-			// already signals the poll goroutine's refresh channel, and it
-			// is the poll goroutine itself that calls Force (see tray.go) —
-			// calling it from this goroutine instead would race Status.
-			return login.Launch(cfg.Addr, method)
+			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+			defer cancel()
+			return runLogin(ctx, method, loginDeps{
+				oidc:     authflow.OIDC,
+				userpass: authflow.UserpassBrowser,
+				oidcConfig: authflow.OIDCConfig{
+					Addr: cfg.Addr, Mount: cfg.OIDCMount, Role: cfg.OIDCRole,
+					CallbackPort: cfg.CallbackPort, OpenURL: openURL,
+				},
+				userpassConfig: authflow.UserpassBrowserConfig{
+					Userpass:        authflow.UserpassConfig{Addr: cfg.Addr, Mount: cfg.UserpassMount},
+					DefaultUsername: cfg.Username,
+					OpenURL:         openURL,
+				},
+				writeToken: func(token string) error { return bao.WriteToken(tokenPath, token) },
+				// No explicit Force here on the poll goroutine's behalf
+				// beyond this call: Poller's throttle state is
+				// mutex-guarded, so calling Force from this login goroutine
+				// — rather than only via tray.go's kick() — is safe (see
+				// bao.Poller's doc comment).
+				force: poller.Force,
+				alert: alert,
+			})
 		},
 		Refresh:    func() { poller.Force() },
 		Thresholds: tracker.Crossed,
@@ -80,21 +121,79 @@ func main() {
 			_ = notify.Send("OpenBao", fmt.Sprintf("Your token expires in less than %s", tray.Human(threshold)))
 		},
 		OpenURL: openURL,
-		Alert: func(title, message string) {
-			_ = notify.Send(title, message)
-		},
+		Alert:   alert,
 	})
 }
 
-func openURL(url string) error {
-	switch runtime.GOOS {
-	case "darwin":
-		return exec.Command("open", url).Start()
-	case "windows":
-		return exec.Command("cmd", "/c", "start", url).Start()
+// loginDeps carries runLogin's dependencies as injected fields so the login
+// flow — including its two failure alerts and its one success side effect —
+// is reachable from a test without a live OpenBao server, a real browser, or
+// a real autostart/token file. main wires these to authflow.OIDC,
+// authflow.UserpassBrowser, bao.WriteToken, poller.Force, and the shared
+// alert seam; tests wire fakes.
+type loginDeps struct {
+	oidc     func(context.Context, authflow.OIDCConfig) (string, error)
+	userpass func(context.Context, authflow.UserpassBrowserConfig) (string, error)
+
+	oidcConfig     authflow.OIDCConfig
+	userpassConfig authflow.UserpassBrowserConfig
+
+	writeToken func(token string) error
+	force      func()
+	alert      func(title, message string)
+}
+
+// runLogin drives one login attempt: it calls the configured authflow entry
+// point for method, saves the resulting token, and forces a poller refresh.
+// Every failure path alerts exactly once, through deps.alert, and the
+// success path never alerts. writeToken failing does not call force — a
+// token that was not actually saved must not make the tray look fresh.
+func runLogin(ctx context.Context, method string, deps loginDeps) error {
+	var token string
+	var err error
+	switch method {
+	case "oidc":
+		token, err = deps.oidc(ctx, deps.oidcConfig)
 	default:
-		return exec.Command("xdg-open", url).Start()
+		token, err = deps.userpass(ctx, deps.userpassConfig)
 	}
+	// Failures go through the same alert seam as logout, rather than
+	// calling notify.Send directly — one path, and an injectable one.
+	if err != nil {
+		if errors.Is(err, authflow.ErrBusy) {
+			deps.alert("OpenBao", "A login is already in progress.")
+		} else {
+			deps.alert("OpenBao", "Login did not complete.")
+		}
+		return err
+	}
+	if err := deps.writeToken(token); err != nil {
+		deps.alert("OpenBao", "Signed in, but the token could not be saved.")
+		return err
+	}
+	deps.force()
+	return nil
+}
+
+// browserCommand returns the command that opens url in the system browser.
+// goos is a parameter so every platform's branch is testable from one machine.
+func browserCommand(goos, url string) (string, []string) {
+	switch goos {
+	case "darwin":
+		return "open", []string{url}
+	case "windows":
+		// rundll32 takes the URL as a single argument and does no shell
+		// parsing, so query strings with & survive. `cmd /c start` does not:
+		// cmd.exe re-parses the line and & terminates the command.
+		return "rundll32", []string{"url.dll,FileProtocolHandler", url}
+	default:
+		return "xdg-open", []string{url}
+	}
+}
+
+func openURL(url string) error {
+	name, args := browserCommand(runtime.GOOS, url)
+	return exec.Command(name, args...).Start()
 }
 
 func removeToken(path string) error {

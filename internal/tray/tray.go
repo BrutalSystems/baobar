@@ -2,11 +2,13 @@ package tray
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
 	"fyne.io/systray"
 
+	"github.com/brutalsystems/baobar/internal/authflow"
 	"github.com/brutalsystems/baobar/internal/bao"
 )
 
@@ -19,11 +21,6 @@ type Options struct {
 	// invisible — and "no VAULT_ADDR yet" is the most likely first-run state.
 	ConfigError string
 
-	// CLIAvailable reports whether `bao` is on PATH. M1's login shells out to
-	// it; when it is missing the login items say so instead of opening a
-	// console that fails.
-	CLIAvailable bool
-
 	// Status may block on the network. It is called ONLY from the poll
 	// goroutine — never from the goroutine servicing menu clicks, or the menu
 	// freezes for the duration of every server check.
@@ -35,10 +32,17 @@ type Options struct {
 	Notify     func(threshold time.Duration)
 	OpenURL    func(string) error
 
+	// StartAtLoginEnabled reports the real on-disk state, re-read after every
+	// toggle. ToggleStartAtLogin returns an error if the change did not happen,
+	// so the checkbox can stay honest rather than claiming a state it failed to
+	// reach.
+	StartAtLoginEnabled func() bool
+	ToggleStartAtLogin  func(on bool) error
+
 	// Alert surfaces a failure the menu would otherwise swallow silently —
 	// e.g. a logout whose revoke call never reached the server, or a login
-	// terminal that failed to launch. title/message are short and never
-	// contain a token value.
+	// that failed to complete. title/message are short and never contain a
+	// token value.
 	Alert func(title, message string)
 
 	// PollEvery defaults to one second. This is only how often the poller is
@@ -53,6 +57,39 @@ func (o Options) alert(title, message string) {
 	if o.Alert != nil {
 		o.Alert(title, message)
 	}
+}
+
+// startAtLoginEnabled calls o.StartAtLoginEnabled if the caller set one; a
+// nil field reports "not enabled" instead of panicking the UI goroutine on a
+// click, mirroring alert's nil-safety for a caller that doesn't wire the
+// option (tests, future embedders).
+func (o Options) startAtLoginEnabled() bool {
+	if o.StartAtLoginEnabled == nil {
+		return false
+	}
+	return o.StartAtLoginEnabled()
+}
+
+// toggleStartAtLogin calls o.ToggleStartAtLogin if the caller set one; a nil
+// field reports an error rather than panicking. That keeps the checkbox's
+// honesty property intact even when the option is unset: the subsequent
+// startAtLoginEnabled() re-read still drives what the box shows.
+func (o Options) toggleStartAtLogin(on bool) error {
+	if o.ToggleStartAtLogin == nil {
+		return errors.New("start at login is not supported")
+	}
+	return o.ToggleStartAtLogin(on)
+}
+
+// startAtLoginOutcome decides the post-toggle checkbox state and whether to
+// alert, from ONLY the toggle's error and the freshly re-read on-disk
+// state — never from what the user asked for. A checkbox that shows "on"
+// for a toggle that did not actually happen is worse than no checkbox at
+// all (see StartAtLoginEnabled's doc comment); deriving checked solely from
+// onDisk is what makes that impossible, and is why this is split out as its
+// own pure, directly testable function rather than left inline in uiLoop.
+func startAtLoginOutcome(toggleErr error, onDisk bool) (checked, needsAlert bool) {
+	return onDisk, toggleErr != nil
 }
 
 // holder passes the latest Status from the poll goroutine to the UI goroutine.
@@ -104,6 +141,12 @@ func onReadyError(o Options) {
 func onReadyNormal(o Options) {
 	h := &holder{}
 	refresh := make(chan struct{}, 1)
+	// loginDone carries only a completion signal, never a value: the login
+	// goroutine that owns a flow uses it to hand re-enabling of the two login
+	// items back to the UI goroutine, since fyne.io/systray's Enable/Disable
+	// are unsynchronized field writes and calling them from the login
+	// goroutine would race with uiLoop calling Disable() on the next click.
+	loginDone := make(chan struct{}, 1)
 
 	systray.SetIcon(Icon(bao.StateSignedOut))
 	systray.SetTitle("🔒 login")
@@ -120,30 +163,24 @@ func onReadyNormal(o Options) {
 	systray.AddSeparator()
 	mLogout := systray.AddMenuItem("Log out (revoke token)", "Revoke this token on the server")
 	systray.AddSeparator()
-	mUserpass := systray.AddMenuItem("Login with password + TOTP", "Opens a terminal")
-	mOIDC := systray.AddMenuItem("Login with SSO", "Opens a terminal")
+	mUserpass := systray.AddMenuItem("Login with password + TOTP", "Opens a browser tab")
+	mOIDC := systray.AddMenuItem("Login with SSO", "Opens a browser tab")
 	systray.AddSeparator()
 	mRefresh := systray.AddMenuItem("Refresh now", "Check the server immediately")
+	mStartAtLogin := systray.AddMenuItemCheckbox("Start at login", "Launch Baobar when you log in",
+		o.startAtLoginEnabled())
 	mQuit := systray.AddMenuItem("Quit", "Quit Baobar")
 
-	// Without the CLI, M1 cannot log in at all. Say so once, here, rather than
-	// letting the buttons open a console that prints "bao: command not found".
-	if !o.CLIAvailable {
-		for _, m := range []*systray.MenuItem{mUserpass, mOIDC} {
-			m.Disable()
-		}
-		mUserpass.SetTitle("Login needs the bao CLI (not installed)")
-		mOIDC.SetTitle("Use the web UI above to sign in")
-	}
-
 	// The poll goroutine is the only caller of o.Status, so a slow or hanging
-	// server cannot block menu clicks. It is also the only caller of
-	// o.Refresh (which forces the poller's next Status call past its
-	// throttle): Poller.Force documents that it must only ever be invoked
-	// from the same goroutine that calls Status, so every other goroutine
-	// that wants a forced recheck — a menu click, or a logout/login attempt
-	// finishing in its own goroutine below — asks for one only by writing to
-	// refresh, never by calling o.Refresh directly.
+	// server cannot block menu clicks. Within this loop, it is also the only
+	// caller of o.Refresh (which forces the poller's next Status call past
+	// its throttle): a menu click or a logout/login attempt finishing in its
+	// own goroutine below asks for one by writing to refresh, so that request
+	// still funnels through the single goroutine that calls Status. That is a
+	// stylistic choice here, not a safety requirement — Poller.Force is
+	// documented as safe to call from any goroutine (its throttle state is
+	// mutex-guarded; see bao.Poller), which is exactly why the login flow in
+	// main.go calls it directly from its own goroutine instead.
 	go func() {
 		ctx := context.Background()
 		t := time.NewTicker(o.PollEvery)
@@ -158,20 +195,20 @@ func onReadyNormal(o Options) {
 		}
 	}()
 
-	go uiLoop(o, h, refresh, menuItems{
+	go uiLoop(o, h, refresh, loginDone, menuItems{
 		addr: mAddr, who: mWho, policies: mPolicies, expires: mExpires,
 		logout: mLogout, userpass: mUserpass, oidc: mOIDC,
-		refresh: mRefresh, quit: mQuit,
+		refresh: mRefresh, startAtLogin: mStartAtLogin, quit: mQuit,
 	})
 }
 
 type menuItems struct {
 	addr, who, policies, expires *systray.MenuItem
 	logout, userpass, oidc       *systray.MenuItem
-	refresh, quit                *systray.MenuItem
+	refresh, startAtLogin, quit  *systray.MenuItem
 }
 
-func uiLoop(o Options, h *holder, refreshCh chan struct{}, m menuItems) {
+func uiLoop(o Options, h *holder, refreshCh, loginDone chan struct{}, m menuItems) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 
@@ -281,23 +318,52 @@ func uiLoop(o Options, h *holder, refreshCh chan struct{}, m menuItems) {
 				kick()
 			}()
 		case <-m.userpass.ClickedCh:
+			m.userpass.Disable()
+			m.oidc.Disable()
 			go func() {
-				if err := o.Login("userpass"); err != nil {
-					o.alert("Could not start login",
-						"The terminal could not be started. Use the web UI link above to sign in instead.")
+				err := o.Login("userpass")
+				// ErrBusy means some other flow — the one that actually holds
+				// authflow's single login slot — is still running. Signalling
+				// completion here would re-enable the items while that other
+				// flow is still in flight, letting a second click start a
+				// third concurrent attempt. Only the goroutine that owns the
+				// running flow gets to signal loginDone.
+				if !errors.Is(err, authflow.ErrBusy) {
+					loginDone <- struct{}{}
 				}
 				kick()
 			}()
 		case <-m.oidc.ClickedCh:
+			m.userpass.Disable()
+			m.oidc.Disable()
 			go func() {
-				if err := o.Login("oidc"); err != nil {
-					o.alert("Could not start login",
-						"The terminal could not be started. Use the web UI link above to sign in instead.")
+				err := o.Login("oidc")
+				if !errors.Is(err, authflow.ErrBusy) {
+					loginDone <- struct{}{}
 				}
 				kick()
 			}()
+		case <-loginDone:
+			// Re-enabling here, on the UI goroutine, is the point: systray's
+			// Enable/Disable are unsynchronized field writes, so doing this
+			// from the login goroutine above would race with a Disable() call
+			// here on the next click.
+			m.userpass.Enable()
+			m.oidc.Enable()
 		case <-m.refresh.ClickedCh:
 			kick()
+		case <-m.startAtLogin.ClickedCh:
+			want := !m.startAtLogin.Checked()
+			toggleErr := o.toggleStartAtLogin(want)
+			checked, needsAlert := startAtLoginOutcome(toggleErr, o.startAtLoginEnabled())
+			if needsAlert {
+				o.alert("Start at login", "Could not change the setting.")
+			}
+			if checked {
+				m.startAtLogin.Check()
+			} else {
+				m.startAtLogin.Uncheck()
+			}
 		case <-m.quit.ClickedCh:
 			systray.Quit()
 			return

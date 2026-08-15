@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,14 +25,24 @@ const (
 	DefaultWarn    = 30 * time.Minute
 )
 
+const (
+	DefaultOIDCMount     = "oidc"
+	DefaultUserpassMount = "userpass"
+	DefaultCallbackPort  = 8250
+)
+
 var (
 	ErrNoAddr        = errors.New("no OpenBao address configured (set VAULT_ADDR or addr in config.toml)")
 	ErrRecheckTooLow = fmt.Errorf("recheck below the %s minimum", MinRecheck)
+
+	// ErrBadMount means an auth mount path is not a single safe path segment.
+	ErrBadMount = errors.New("auth mount must be a single path segment of letters, digits, dashes or underscores")
 
 	// Allowlists for URL components
 	dnsHostRe  = regexp.MustCompile(`^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::[0-9]{1,5})?$`)
 	ipv6HostRe = regexp.MustCompile(`^\[[0-9A-Fa-f:.]+\](?::[0-9]{1,5})?$`)
 	pathRe     = regexp.MustCompile(`^[A-Za-z0-9._~/-]*$`)
+	mountRe    = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 )
 
 // Config holds settings only. File paths come from DefaultPaths and are passed
@@ -40,12 +51,26 @@ type Config struct {
 	Addr    string
 	Recheck time.Duration
 	Warn    time.Duration
+
+	// Auth-flow settings. Mounts are path segments in OpenBao request URLs;
+	// CallbackPort must match the OIDC role's allowed redirect URI.
+	OIDCMount     string
+	OIDCRole      string
+	UserpassMount string
+	CallbackPort  int
+	Username      string
 }
 
 type fileConfig struct {
 	Addr    string `toml:"addr"`
 	Recheck string `toml:"recheck"`
 	Warn    string `toml:"warn"`
+
+	OIDCMount     string `toml:"oidc_mount"`
+	OIDCRole      string `toml:"oidc_role"`
+	UserpassMount string `toml:"userpass_mount"`
+	CallbackPort  string `toml:"callback_port"`
+	Username      string `toml:"username"`
 }
 
 // Load resolves settings with the file taking precedence over the environment.
@@ -89,12 +114,37 @@ func Load(path string, getenv func(string) string) (Config, error) {
 		}
 		c.Warn = d
 	}
+
+	c.OIDCMount = firstNonEmpty(fc.OIDCMount, getenv("BAOBAR_OIDC_MOUNT"), DefaultOIDCMount)
+	c.UserpassMount = firstNonEmpty(fc.UserpassMount, getenv("BAOBAR_USERPASS_MOUNT"), DefaultUserpassMount)
+	for _, m := range []string{c.OIDCMount, c.UserpassMount} {
+		if !mountRe.MatchString(m) {
+			return Config{}, fmt.Errorf("%w: %q", ErrBadMount, m)
+		}
+	}
+
+	c.OIDCRole = firstNonEmpty(fc.OIDCRole, getenv("BAOBAR_OIDC_ROLE"))
+	c.Username = firstNonEmpty(fc.Username, getenv("BAOBAR_USERNAME"))
+
+	c.CallbackPort = DefaultCallbackPort
+	if s := firstNonEmpty(fc.CallbackPort, getenv("BAOBAR_CALLBACK_PORT")); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse callback_port %q: %w", s, err)
+		}
+		if n < 1 || n > 65535 {
+			return Config{}, fmt.Errorf("callback_port %d is not a valid port", n)
+		}
+		c.CallbackPort = n
+	}
 	return c, nil
 }
 
-// ValidateAddr enforces a strict allowlist for URL components. This is the single
-// validator for any address that may reach a shell, as it is interpolated into
-// terminal commands by internal/login.
+// ValidateAddr enforces a strict allowlist for URL components. This is the
+// single validator for the address used to construct every OpenBao request
+// URL — every authflow request and the "open web UI" tray link all build on
+// this Addr, so a malformed or hostile value must be caught here, once,
+// rather than trusted downstream.
 func ValidateAddr(addr string) error {
 	u, err := url.Parse(addr)
 	if err != nil {
