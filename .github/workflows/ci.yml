@@ -46,6 +46,12 @@ jobs:
         if: runner.os == 'Windows'
         run: go test -count=1 ./...
 
+      # macOS cannot be cross-compiled (see the cross-build job), so the app
+      # binary is built here, natively, to keep that target covered.
+      - name: Build the app binary (macOS)
+        if: runner.os == 'macOS'
+        run: go build -o /dev/null ./cmd/baobar
+
   lint:
     name: formatting
     runs-on: ubuntu-latest
@@ -76,8 +82,10 @@ jobs:
       # Proves the binary still builds for every target from one host, which is
       # how releases are cut. Windows needs -H=windowsgui or a console window
       # flashes on launch.
-      - name: darwin/arm64
-        run: GOOS=darwin GOARCH=arm64 go build -o /dev/null ./cmd/baobar
+      # darwin is deliberately absent: systray's macOS backend is Objective-C
+      # (systray_darwin.m), so cross-compiling it from Linux with CGO_ENABLED=0
+      # drops the platform files and leaves undefined symbols. macOS is built
+      # natively in the macos-latest job instead.
       - name: windows/amd64
         run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o /dev/null ./cmd/baobar
       - name: linux/amd64

@@ -340,19 +340,24 @@ func TestThrottleHoldsForExpiredTokenReturningForbidden(t *testing.T) {
 
 func TestThrottleHoldsWhenSaveCacheFails(t *testing.T) {
 	dir := t.TempDir()
-	noWrite := filepath.Join(dir, "nowrite")
-	if err := os.Mkdir(noWrite, 0o500); err != nil {
-		t.Fatalf("mkdir: %v", err)
+
+	// Make the cache path unwritable by giving it a PARENT that is a regular
+	// file. A read-only directory would be the obvious choice, but Windows does
+	// not prevent file creation inside one, so that setup silently succeeded
+	// there and the test failed on its own premise. A file-as-parent fails on
+	// every platform.
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write blocker: %v", err)
 	}
-	t.Cleanup(func() { os.Chmod(noWrite, 0o700) }) // let TempDir clean up
 
 	l := &fakeLookuper{info: Info{ExpiresAt: time.Unix(10_000, 0).Add(6 * time.Hour), Name: "userpass-dev"}}
-	p, tokenPath, tick := tickingPoller(t, l, filepath.Join(noWrite, "status.json"))
+	p, tokenPath, tick := tickingPoller(t, l, filepath.Join(blocker, "status.json"))
 	writeToken(t, tokenPath, "hvs.abc")
 
 	// Confirm the premise: the cache path really is unwritable.
 	if err := SaveCache(p.CachePath, Cache{}); err == nil {
-		t.Fatal("test setup: SaveCache unexpectedly succeeded against a read-only directory")
+		t.Fatal("test setup: SaveCache unexpectedly succeeded against an unwritable path")
 	}
 
 	runTicks(p, tick)
