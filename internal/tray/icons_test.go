@@ -39,11 +39,11 @@ func silhouette(t *testing.T, name string, raw []byte) string {
 // worst pair for it. Every state must therefore differ in SHAPE.
 func TestIconsAreDistinguishableWithoutColour(t *testing.T) {
 	icons := map[string][]byte{
-		"signed in":    Icon(bao.StateSignedIn),
-		"expiring":     Icon(bao.StateExpiring),
-		"signed out":   Icon(bao.StateSignedOut),
-		"degraded":     Icon(bao.StateDegraded),
-		"config error": IconConfigError(),
+		"signed in":    pngFor(bao.StateSignedIn),
+		"expiring":     pngFor(bao.StateExpiring),
+		"signed out":   pngFor(bao.StateSignedOut),
+		"degraded":     pngFor(bao.StateDegraded),
+		"config error": pngConfigError,
 	}
 
 	seen := map[string]string{} // silhouette -> the state that produced it
@@ -61,11 +61,11 @@ func TestIconsAreDistinguishableWithoutColour(t *testing.T) {
 // A silhouette that is empty, or that fills the whole canvas, is not a shape.
 func TestIconsHaveAMeaningfulSilhouette(t *testing.T) {
 	for name, raw := range map[string][]byte{
-		"signed in":    Icon(bao.StateSignedIn),
-		"expiring":     Icon(bao.StateExpiring),
-		"signed out":   Icon(bao.StateSignedOut),
-		"degraded":     Icon(bao.StateDegraded),
-		"config error": IconConfigError(),
+		"signed in":    pngFor(bao.StateSignedIn),
+		"expiring":     pngFor(bao.StateExpiring),
+		"signed out":   pngFor(bao.StateSignedOut),
+		"degraded":     pngFor(bao.StateDegraded),
+		"config error": pngConfigError,
 	} {
 		s := silhouette(t, name, raw)
 		inked := bytes.Count([]byte(s), []byte("#"))
@@ -82,8 +82,8 @@ func TestIconsHaveAMeaningfulSilhouette(t *testing.T) {
 
 func TestIconsAreSquareAndTraySized(t *testing.T) {
 	for name, raw := range map[string][]byte{
-		"signed in":    Icon(bao.StateSignedIn),
-		"config error": IconConfigError(),
+		"signed in":    pngFor(bao.StateSignedIn),
+		"config error": pngConfigError,
 	} {
 		cfg, err := png.DecodeConfig(bytes.NewReader(raw))
 		if err != nil {
@@ -94,6 +94,54 @@ func TestIconsAreSquareAndTraySized(t *testing.T) {
 		}
 		if cfg.Width < 16 || cfg.Width > 64 {
 			t.Errorf("%s: %dpx is outside a sensible tray-icon range", name, cfg.Width)
+		}
+	}
+}
+
+// systray accepts .ico on Windows and .ico/.jpg/.png on macOS and Linux.
+// Feeding it PNG on Windows produces no tray icon at all — and because
+// SetTitle is a no-op there, the icon is the entire signal, so the app
+// becomes invisible rather than merely ugly. Observed on a real Windows
+// Server 2022 desktop: the menu opened, the process ran, and nothing
+// appeared in the notification area.
+func TestWindowsIconsAreICOFormat(t *testing.T) {
+	// ICO header: reserved=0, type=1 (icon). PNG would start 0x89 'P' 'N' 'G'.
+	isICO := func(b []byte) bool {
+		return len(b) >= 6 && b[0] == 0 && b[1] == 0 && b[2] == 1 && b[3] == 0
+	}
+
+	for _, tc := range []struct {
+		name string
+		raw  []byte
+	}{
+		{"signedin", icoFor(bao.StateSignedIn)},
+		{"expiring", icoFor(bao.StateExpiring)},
+		{"degraded", icoFor(bao.StateDegraded)},
+		{"signedout", icoFor(bao.StateSignedOut)},
+		{"configerror", icoConfigError},
+	} {
+		if len(tc.raw) == 0 {
+			t.Errorf("%s: no ICO bytes embedded", tc.name)
+			continue
+		}
+		if !isICO(tc.raw) {
+			t.Errorf("%s: not ICO format (first bytes % x)", tc.name, tc.raw[:min(6, len(tc.raw))])
+		}
+	}
+}
+
+// The non-Windows assets must stay PNG: that is what the silhouette tests
+// decode, and what macOS and Linux are given.
+func TestNonWindowsIconsRemainPNG(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  []byte
+	}{
+		{"signedin", pngFor(bao.StateSignedIn)},
+		{"configerror", pngConfigError},
+	} {
+		if _, err := png.Decode(bytes.NewReader(tc.raw)); err != nil {
+			t.Errorf("%s: not decodable as PNG: %v", tc.name, err)
 		}
 	}
 }

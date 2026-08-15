@@ -17,6 +17,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"image"
 	"image/color"
 	"image/png"
@@ -93,16 +95,47 @@ func main() {
 			}
 		}
 
-		f, err := os.Create(filepath.Join(dir, ic.name+".png"))
-		if err != nil {
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
 			log.Fatal(err)
 		}
-		if err := png.Encode(f, img); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, ic.name+".png"), buf.Bytes(), 0o644); err != nil {
 			log.Fatal(err)
 		}
-		if err := f.Close(); err != nil {
+		// Windows needs .ico: systray accepts PNG on macOS and Linux only, and
+		// handing it PNG there yields no tray icon at all.
+		if err := os.WriteFile(filepath.Join(dir, ic.name+".ico"), icoWrap(buf.Bytes()), 0o644); err != nil {
 			log.Fatal(err)
 		}
 	}
 	log.Printf("wrote %d icons to %s", len(icons), dir)
+}
+
+// icoWrap packages PNG bytes as a single-image .ico. Windows Vista and later
+// accept PNG-compressed icon entries, so the artwork needs no re-encoding —
+// only the 22-byte container that tells Windows what it is.
+//
+// Layout: a 6-byte ICONDIR, one 16-byte ICONDIRENTRY, then the PNG itself.
+func icoWrap(pngBytes []byte) []byte {
+	var b bytes.Buffer
+	w16 := func(v uint16) { _ = binary.Write(&b, binary.LittleEndian, v) }
+	w32 := func(v uint32) { _ = binary.Write(&b, binary.LittleEndian, v) }
+
+	w16(0) // reserved, always 0
+	w16(1) // type 1 = icon
+	w16(1) // one image
+
+	// Width and height are single bytes, where 0 means 256. size is 22, so it
+	// fits directly; the constant is asserted below to keep that true.
+	b.WriteByte(byte(size))
+	b.WriteByte(byte(size))
+	b.WriteByte(0) // palette size, 0 for non-paletted
+	b.WriteByte(0) // reserved
+	w16(1)         // colour planes
+	w16(32)        // bits per pixel
+	w32(uint32(len(pngBytes)))
+	w32(6 + 16) // the image data begins after the header and one entry
+
+	b.Write(pngBytes)
+	return b.Bytes()
 }
