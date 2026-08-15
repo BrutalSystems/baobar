@@ -68,3 +68,73 @@ jobs:
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+
+          # A PAT that can push to a BrutalSystems fork of microsoft/winget-pkgs
+          # and open a PR upstream. Absent, manifests are generated but not
+          # submitted and the release still succeeds.
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+
+  # Chocolatey gets its own job because `choco` exists only on Windows, and the
+  # release job above must be macOS (native cgo for systray, plus codesign).
+  # Re-running GoReleaser here is not an option either: it would rebuild every
+  # target, and the darwin build cannot be produced on a Windows runner.
+  #
+  # So this consumes the published artifacts rather than rebuilding them, which
+  # also means the package points at exactly the archive users download.
+  chocolatey:
+    needs: release
+    runs-on: windows-latest
+    # Job-level so the push step's `if:` can see it. A step-scoped env is not
+    # visible to that step's own condition, which would silently never push.
+    env:
+      CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >>"$GITHUB_ENV"
+
+      - name: Fetch the published checksum
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern checksums.txt --output checksums.txt
+          archive="baobar_${VERSION}_windows_amd64.zip"
+          sum=$(grep " ${archive}\$" checksums.txt | awk '{print $1}')
+          if [ -z "$sum" ]; then
+            echo "no checksum for $archive in checksums.txt" >&2
+            cat checksums.txt >&2
+            exit 1
+          fi
+          echo "CHECKSUM64=$sum" >>"$GITHUB_ENV"
+
+      - name: Stamp the install script
+        shell: bash
+        run: |
+          sed -i "s|__CHECKSUM64__|${CHECKSUM64}|" packaging/chocolatey/tools/chocolateyinstall.ps1
+          if grep -q "__CHECKSUM64__" packaging/chocolatey/tools/chocolateyinstall.ps1; then
+            echo "placeholder was not substituted" >&2
+            exit 1
+          fi
+
+      - name: choco pack
+        shell: pwsh
+        run: choco pack packaging/chocolatey/baobar.nuspec --version "$env:VERSION" --out packaging/chocolatey
+
+      # Absent an API key the package is built and attached to the run as an
+      # artifact but not pushed, so a release still succeeds before the
+      # Chocolatey account exists — the same shape as the cask and notarization.
+      - name: choco push
+        if: ${{ env.CHOCOLATEY_API_KEY != '' }}
+        shell: pwsh
+        run: |
+          choco push "packaging/chocolatey/baobar.$env:VERSION.nupkg" `
+            --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chocolatey-package
+          path: packaging/chocolatey/*.nupkg

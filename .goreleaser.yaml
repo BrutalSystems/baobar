@@ -131,3 +131,37 @@ homebrew_casks:
 
       A config file is the durable option: "Start at login" runs Baobar from
       launchd, which does not inherit your shell environment.
+
+# winget manifests. Unlike Chocolatey this pipe is pure Go and needs no
+# external CLI, so it runs in the macOS release job alongside everything else.
+#
+# Publishing means opening a pull request against microsoft/winget-pkgs from a
+# fork, which needs a token and a fork that does not exist yet — so uploading is
+# gated the same way as the cask. Without the token the manifests are still
+# generated into dist/ for inspection.
+winget:
+  - name: baobar
+    publisher: BrutalSystems
+    publisher_url: "https://github.com/BrutalSystems"
+    homepage: "https://github.com/BrutalSystems/baobar"
+    license: MIT
+    license_url: "https://github.com/BrutalSystems/baobar/blob/main/LICENSE"
+    copyright: "2026 BrutalSystems"
+    short_description: "Menu bar / system tray indicator for OpenBao login state and token expiry"
+    description: |
+      Baobar shows whether you are signed in to OpenBao and how long your token
+      has left. Logging back in opens your browser, not a terminal.
+    ids: [default]
+    skip_upload: '{{ not (isEnvSet "WINGET_TOKEN") }}'
+    repository:
+      owner: BrutalSystems
+      name: winget-pkgs
+      branch: "baobar-{{ .Version }}"
+      token: "{{ .Env.WINGET_TOKEN }}"
+      pull_request:
+        enabled: true
+        draft: false
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>baobar</id>
+    <version>$version$</version>
+    <packageSourceUrl>https://github.com/BrutalSystems/baobar/tree/main/packaging/chocolatey</packageSourceUrl>
+    <owners>BrutalSystems</owners>
+    <title>Baobar</title>
+    <authors>BrutalSystems</authors>
+    <projectUrl>https://github.com/BrutalSystems/baobar</projectUrl>
+    <licenseUrl>https://github.com/BrutalSystems/baobar/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/BrutalSystems/baobar</projectSourceUrl>
+    <docsUrl>https://github.com/BrutalSystems/baobar/blob/main/README.md</docsUrl>
+    <bugTrackerUrl>https://github.com/BrutalSystems/baobar/issues</bugTrackerUrl>
+    <tags>openbao vault secrets tray notification-area cli admin</tags>
+    <summary>System tray indicator for OpenBao login state and token expiry</summary>
+    <description>
+Baobar shows whether you are signed in to OpenBao and how long your token has
+left, in the Windows notification area. Logging back in opens your browser, not
+a terminal: it drives both the SSO (OIDC) flow and a password + TOTP form
+itself, over a short-lived loopback listener, and never shells out to the `bao`
+CLI.
+
+It writes the token where the `bao` CLI and SOPS expect it, so a browser login
+leaves you signed in everywhere.
+
+On first run, Baobar asks for your OpenBao server address in a browser tab —
+there is no configuration file to write by hand.
+    </description>
+    <releaseNotes>https://github.com/BrutalSystems/baobar/releases/tag/v$version$</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

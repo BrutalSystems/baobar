@@ -1,0 +1,30 @@
+VERIFICATION
+
+Chocolatey moderators and users can verify this package as follows.
+
+The binary is not embedded in this package. chocolateyinstall.ps1 downloads the
+release archive published by the project's own CI, and Chocolatey verifies it
+against the sha256 checksum recorded in that script before extracting.
+
+  1. The archive URL is:
+       https://github.com/BrutalSystems/baobar/releases/download/v<version>/baobar_<version>_windows_amd64.zip
+
+  2. The expected checksum is the `checksum64` value in
+     tools\chocolateyinstall.ps1.
+
+  3. That checksum can be compared against checksums.txt, published as a release
+     asset alongside the archive:
+       https://github.com/BrutalSystems/baobar/releases/tag/v<version>
+
+  4. Both are produced by GoReleaser in a GitHub Actions workflow whose
+     definition is public:
+       https://github.com/BrutalSystems/baobar/blob/main/.github/workflows/release.yml
+
+The software is MIT licensed. Its full licence text is at:
+  https://github.com/BrutalSystems/baobar/blob/main/LICENSE
+
+Third-party components bundled in the binary are listed at:
+  https://github.com/BrutalSystems/baobar/blob/main/THIRD_PARTY_LICENSES.md
+
+Note: Windows binaries are not yet Authenticode-signed. See
+  https://github.com/BrutalSystems/baobar/issues/11
