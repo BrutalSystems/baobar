@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore"
+      include: scope
+    groups:
+      # Grouped so a routine patch sweep is one PR to review rather than six.
+      # A dependency bump changes THIRD_PARTY_LICENSES.md only if it adds or
+      # removes a component; the release workflow regenerates it either way.
+      go-dependencies:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
