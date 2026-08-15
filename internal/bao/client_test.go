@@ -250,3 +250,49 @@ func TestLookupSelfVeryLargeTTLOverflow(t *testing.T) {
 		t.Errorf("ExpiresAt = %v is before now %v (overflow artifact)", info.ExpiresAt, now)
 	}
 }
+
+// An OIDC login carries its policies in identity_policies, not policies: the
+// token itself holds only "default", and everything granted through an
+// identity group lands in the other field. Reading only "policies" and then
+// filtering "default" out of it leaves the menu reporting "none" for a user
+// who in fact has several. This is the exact body a live OpenBao returned for
+// an OIDC session.
+func TestLookupSelfIncludesIdentityPolicies(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":{
+			"expire_time":"","ttl":3600,
+			"display_name":"oidc-someone@example.com",
+			"policies":["default"],
+			"identity_policies":["admin","sops-infra"]
+		}}`))
+	}))
+	defer srv.Close()
+
+	info, err := NewClient(srv.URL).LookupSelf(context.Background(), "t", time.Now())
+	if err != nil {
+		t.Fatalf("LookupSelf: %v", err)
+	}
+	if len(info.Policies) != 2 || info.Policies[0] != "admin" || info.Policies[1] != "sops-infra" {
+		t.Errorf("Policies = %v, want [admin sops-infra]", info.Policies)
+	}
+}
+
+// A policy present in both fields must be listed once.
+func TestLookupSelfDeduplicatesPolicies(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":{
+			"expire_time":"","ttl":3600,"display_name":"x",
+			"policies":["default","admin"],
+			"identity_policies":["admin","ops"]
+		}}`))
+	}))
+	defer srv.Close()
+
+	info, err := NewClient(srv.URL).LookupSelf(context.Background(), "t", time.Now())
+	if err != nil {
+		t.Fatalf("LookupSelf: %v", err)
+	}
+	if len(info.Policies) != 2 || info.Policies[0] != "admin" || info.Policies[1] != "ops" {
+		t.Errorf("Policies = %v, want [admin ops] with no duplicate", info.Policies)
+	}
+}

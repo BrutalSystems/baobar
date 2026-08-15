@@ -62,6 +62,11 @@ func (c *Client) LookupSelf(ctx context.Context, token string, now time.Time) (I
 			TTL         int64    `json:"ttl"`
 			DisplayName string   `json:"display_name"`
 			Policies    []string `json:"policies"`
+			// Policies granted through an identity group rather than attached
+			// to the token. An OIDC or JWT login puts everything here and
+			// leaves "policies" as just ["default"], so reading only the
+			// latter reports "none" for a user who has several.
+			IdentityPolicies []string `json:"identity_policies"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(limBody).Decode(&body); err != nil {
@@ -69,8 +74,16 @@ func (c *Client) LookupSelf(ctx context.Context, token string, now time.Time) (I
 	}
 
 	info := Info{Name: body.Data.DisplayName}
-	for _, p := range body.Data.Policies {
-		if p != "default" {
+	// Token policies first, then identity ones, deduplicated: a policy can
+	// legitimately appear in both, and listing it twice in the menu is noise.
+	// "default" is dropped because every token has it.
+	seen := make(map[string]bool, len(body.Data.Policies)+len(body.Data.IdentityPolicies))
+	for _, list := range [][]string{body.Data.Policies, body.Data.IdentityPolicies} {
+		for _, p := range list {
+			if p == "default" || seen[p] {
+				continue
+			}
+			seen[p] = true
 			info.Policies = append(info.Policies, p)
 		}
 	}
