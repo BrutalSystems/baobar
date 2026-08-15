@@ -127,14 +127,29 @@ jobs:
       # Absent an API key the package is built and attached to the run as an
       # artifact but not pushed, so a release still succeeds before the
       # Chocolatey account exists — the same shape as the cask and notarization.
+      #
+      # A 403 here is usually NOT a broken key. Chocolatey refuses a new
+      # submission while an earlier version from the same maintainer is still
+      # in moderation, so every release cut before the queue clears will fail
+      # this step. That is left failing rather than swallowed: the push really
+      # did not happen, and a green tick would say otherwise. The GitHub
+      # release, the cask and notarization are a separate job and unaffected.
       - name: choco push
         if: ${{ env.CHOCOLATEY_API_KEY != '' }}
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Continue'
           choco push "packaging/chocolatey/baobar.$env:VERSION.nupkg" `
             --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning::choco push failed. If this is a 403, check whether an earlier version is still awaiting moderation at https://community.chocolatey.org/packages/baobar — Chocolatey rejects a new submission while one is pending. The .nupkg is attached to this run as an artifact."
+            exit $LASTEXITCODE
+          }
 
+      # always(): the package is worth having even when the push is refused —
+      # it is the thing you inspect to work out why.
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: chocolatey-package
           path: packaging/chocolatey/*.nupkg
