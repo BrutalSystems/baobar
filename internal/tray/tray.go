@@ -3,6 +3,7 @@ package tray
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -168,9 +169,26 @@ func onReadyNormal(o Options) {
 	systray.AddSeparator()
 	mWho := systray.AddMenuItem("Not signed in", "")
 	mPolicies := systray.AddMenuItem("", "")
+	// The policy names hang off this row as a submenu rather than being joined
+	// into it: a menu item cannot wrap, so a joined list grew without bound and
+	// at seven policies was wider than the rest of the menu combined.
+	//
+	// The pool is allocated once because systray cannot grow its item set
+	// freely, and the parent is deliberately NOT disabled — a disabled parent
+	// will not open its submenu on macOS.
+	//
+	// The children are left enabled purely for legibility: disabled menu items
+	// render in a low-contrast grey, and seven of them stacked together were
+	// hard to read. Nothing listens to their ClickedCh, which is safe because
+	// systray sends on it with a select/default — an unread channel is
+	// discarded rather than blocking the goroutine that dispatches clicks.
+	mPolicyItems := make([]*systray.MenuItem, PolicySlots)
+	for i := range mPolicyItems {
+		mPolicyItems[i] = mPolicies.AddSubMenuItem("", "")
+		mPolicyItems[i].Hide()
+	}
 	mExpires := systray.AddMenuItem("", "")
 	mWho.Disable()
-	mPolicies.Disable()
 	mExpires.Disable()
 	systray.AddSeparator()
 	mLogout := systray.AddMenuItem("Log out (revoke token)", "Revoke this token on the server")
@@ -209,13 +227,15 @@ func onReadyNormal(o Options) {
 
 	go uiLoop(o, h, refresh, loginDone, menuItems{
 		addr: mAddr, who: mWho, policies: mPolicies, expires: mExpires,
-		logout: mLogout, userpass: mUserpass, oidc: mOIDC,
+		policyItems: mPolicyItems,
+		logout:      mLogout, userpass: mUserpass, oidc: mOIDC,
 		refresh: mRefresh, startAtLogin: mStartAtLogin, quit: mQuit,
 	})
 }
 
 type menuItems struct {
 	addr, who, policies, expires *systray.MenuItem
+	policyItems                  []*systray.MenuItem
 	logout, userpass, oidc       *systray.MenuItem
 	refresh, startAtLogin, quit  *systray.MenuItem
 }
@@ -227,6 +247,7 @@ func uiLoop(o Options, h *holder, refreshCh, loginDone chan struct{}, m menuItem
 	var (
 		lastLabel, lastTooltip             string
 		lastWho, lastPolicies, lastExpires string
+		lastPolicyKey                      string
 		lastState                          = bao.State(-1)
 	)
 
@@ -266,6 +287,13 @@ func uiLoop(o Options, h *holder, refreshCh, loginDone chan struct{}, m menuItem
 		if policies != lastPolicies {
 			m.policies.SetTitle(policies)
 			lastPolicies = policies
+		}
+		// Keyed on the names, not on the label: the label is a count, so
+		// swapping one policy for another leaves it identical while the
+		// submenu underneath is stale.
+		if key := strings.Join(s.Policies, "\x00"); key != lastPolicyKey {
+			setPolicySubmenu(m.policyItems, s.Policies)
+			lastPolicyKey = key
 		}
 		if expires != lastExpires {
 			m.expires.SetTitle(expires)
@@ -380,5 +408,20 @@ func uiLoop(o Options, h *holder, refreshCh, loginDone chan struct{}, m menuItem
 			systray.Quit()
 			return
 		}
+	}
+}
+
+// setPolicySubmenu fills the fixed pool of submenu items, showing one per
+// policy and hiding the rest. The pool cannot grow, so policySlots decides
+// what fits and reports any remainder in the final slot.
+func setPolicySubmenu(items []*systray.MenuItem, policies []string) {
+	slots := policySlots(policies, len(items))
+	for i, item := range items {
+		if i < len(slots) {
+			item.SetTitle(slots[i])
+			item.Show()
+			continue
+		}
+		item.Hide()
 	}
 }

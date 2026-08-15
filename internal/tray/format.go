@@ -93,7 +93,7 @@ func MenuLines(s bao.Status) (who, policies, expires string) {
 	switch s.State {
 	case bao.StateSignedIn, bao.StateExpiring:
 		who = "Signed in as " + s.Name
-		policies = "Policies: " + policyList(s.Policies)
+		policies = PolicyLabel(s.Policies)
 		if s.NeverExpires {
 			expires = "Never expires"
 		} else {
@@ -108,9 +108,34 @@ func MenuLines(s bao.Status) (who, policies, expires string) {
 	return who, policies, expires
 }
 
-func policyList(policies []string) string {
+// PolicyLabel is the menu row that opens the policy submenu. It summarises
+// rather than lists: a native menu item cannot wrap, so joining the names put
+// a row in the menu that grew without bound and, at seven policies, was wider
+// than everything else combined.
+func PolicyLabel(policies []string) string {
 	if len(policies) == 0 {
-		return "none"
+		return "Policies: none"
 	}
-	return strings.Join(policies, ", ")
+	return fmt.Sprintf("Policies (%d)", len(policies))
+}
+
+// PolicySlots is the maximum number of submenu items reserved for policies.
+// The pool is fixed because systray cannot grow its item set freely, so there
+// has to be a number; 16 is well clear of realistic policy counts, and going
+// over degrades to a count rather than dropping names silently.
+const PolicySlots = 16
+
+// policySlots returns the titles for the submenu pool. When there are more
+// policies than slots, the final slot reports how many are not shown — the
+// alternative is truncating without telling the user, which for an
+// authorisation list is the wrong failure.
+func policySlots(policies []string, max int) []string {
+	if len(policies) == 0 {
+		return nil
+	}
+	if len(policies) <= max {
+		return append([]string(nil), policies...)
+	}
+	out := append([]string(nil), policies[:max-1]...)
+	return append(out, fmt.Sprintf("+%d more", len(policies)-(max-1)))
 }

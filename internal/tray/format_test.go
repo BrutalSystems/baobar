@@ -144,7 +144,9 @@ func TestMenuLines(t *testing.T) {
 	if who != "Signed in as userpass-dev" {
 		t.Errorf("who = %q", who)
 	}
-	if policies != "Policies: admin, deploy" {
+	// The row is a summary now; the names live in a submenu built from
+	// policySlots. See TestPolicyLabelSummarisesRatherThanListing.
+	if policies != "Policies (2)" {
 		t.Errorf("policies = %q", policies)
 	}
 	if expires != "Expires in 6h00m" {
@@ -198,4 +200,65 @@ func TestEveryStateHasADistinctIcon(t *testing.T) {
 		check(s.String(), Icon(s))
 	}
 	check("config-error", IconConfigError())
+}
+
+// The policy list used to be joined into one menu row. With seven policies
+// that row was wider than the rest of the menu put together, and it grew
+// without bound as policies were added — a native menu item cannot wrap.
+// It is now a submenu, so the row itself has to stay a fixed-width summary.
+func TestPolicyLabelSummarisesRatherThanListing(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		policies []string
+		want     string
+	}{
+		{"none", nil, "Policies: none"},
+		{"one", []string{"admin"}, "Policies (1)"},
+		{"several", []string{"admin", "sops-infra", "sops-mike"}, "Policies (3)"},
+	} {
+		if got := PolicyLabel(tc.policies); got != tc.want {
+			t.Errorf("%s: PolicyLabel = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The submenu is a fixed pool of items — systray cannot grow its item set
+// freely — so the last slot has to absorb any overflow rather than silently
+// dropping policies the user actually holds.
+func TestPolicySlotsFillsThePoolAndReportsOverflow(t *testing.T) {
+	three := []string{"admin", "sops-infra", "sops-mike"}
+	if got := policySlots(three, 16); len(got) != 3 || got[0] != "admin" || got[2] != "sops-mike" {
+		t.Errorf("under the cap: got %v, want the three names unchanged", got)
+	}
+
+	// Exactly at the cap: every slot is a real policy, no overflow row.
+	exact := make([]string, 4)
+	for i := range exact {
+		exact[i] = "p" + string(rune('a'+i))
+	}
+	if got := policySlots(exact, 4); len(got) != 4 || got[3] != "pd" {
+		t.Errorf("at the cap: got %v, want all four names", got)
+	}
+
+	// Over the cap: the last slot counts what did not fit.
+	over := make([]string, 10)
+	for i := range over {
+		over[i] = "p" + string(rune('a'+i))
+	}
+	got := policySlots(over, 4)
+	if len(got) != 4 {
+		t.Fatalf("over the cap: got %d slots, want 4", len(got))
+	}
+	if got[3] != "+7 more" {
+		t.Errorf("overflow slot = %q, want %q (3 names shown, 7 hidden)", got[3], "+7 more")
+	}
+	if got[2] != "pc" {
+		t.Errorf("slot 2 = %q, want the third policy", got[2])
+	}
+}
+
+func TestPolicySlotsIsEmptyForNoPolicies(t *testing.T) {
+	if got := policySlots(nil, 16); len(got) != 0 {
+		t.Errorf("policySlots(nil) = %v, want empty", got)
+	}
 }
