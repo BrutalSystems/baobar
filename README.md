@@ -41,12 +41,28 @@ rendered, and the audit-log throttle held — over 100 seconds of runtime the ca
 `checked_at` never moved while the countdown kept ticking, i.e. one server request, not one
 per second.
 
-**Not verified — M2's browser-based login has unit tests but has never been run:** no
-login flow, OIDC or userpass, has been exercised against a live server or a real browser;
-the "Start at login" checkbox has never been clicked; and the Windows and Linux binaries
-have never been run on their own platforms. See [Build matrix](#build-matrix) for exactly
-which platforms have and have not been exercised — the code is believed correct because it
-is tested, not because it has been watched working.
+**Verified on Windows Server 2022 against the same live server:** the tray icon renders;
+SSO login runs end to end in a real browser; the token Baobar writes is picked up by the
+`bao` CLI with no terminal login; autostart survives a real sign-out and sign-in; the
+"Start at login" guards behave (a deleted binary reports unchecked, a temporary path is
+refused); and the misconfiguration path names both the problem and the config file.
+
+That pass found one bug that made the app invisible on Windows — the tray icon was PNG,
+which `systray` accepts only on macOS and Linux — fixed in v0.1.1.
+
+**Not verified:**
+
+- The **Linux binary has never been run.** It cross-compiles and its tests pass in CI, but
+  whether the tray item actually appears over D-Bus is unknown.
+- **`windows_arm64`** is published but has never been run on Windows-on-ARM hardware. AWS
+  offers no Windows-on-ARM instances, so the Windows pass above could not cover it.
+- The macOS **"Start at login" checkbox has never been clicked in the tray.** The bug behind
+  it was found and fixed against a real stale LaunchAgent, but not through the UI.
+- **Release binaries are unsigned.** See [Install](#install) — this currently breaks the
+  Homebrew path on macOS.
+
+See [Build matrix](#build-matrix) for what has and has not been exercised per platform.
+Build, run, and test are three different claims, and this section tries to keep them apart.
 
 ## State table
 
@@ -109,10 +125,40 @@ exchange rather than returning a token.
 
 ## Install
 
-Build from source for now — no releases, signing, or package manager yet:
+> **macOS: release binaries are not signed or notarized yet.** Gatekeeper raises a dialog
+> whose prominent action is *Move to Trash*; taking it deletes the binary and leaves a
+> Homebrew install that reports success but is broken. Until notarization lands
+> ([#10](https://github.com/BrutalSystems/baobar/issues/10)), **building from source is the
+> reliable path on macOS.**
+
+### Homebrew
 
 ```bash
-git clone <this repo>
+brew tap brutalsystems/tap
+brew trust brutalsystems/tap    # Homebrew refuses casks from untrusted third-party taps
+brew install --cask baobar
+```
+
+On macOS the binary is quarantined on download and must be released before it will run:
+
+```bash
+xattr -d com.apple.quarantine "$(brew --prefix)/bin/baobar"
+```
+
+If Gatekeeper already moved it to the Trash, restore it from there or
+`brew reinstall --cask baobar`, then run the command above **before** launching it.
+
+### Download a release
+
+Binaries for macOS (universal), Linux and Windows:
+<https://github.com/BrutalSystems/baobar/releases>
+
+### Build from source
+
+The path with no signing caveats:
+
+```bash
+git clone https://github.com/BrutalSystems/baobar
 cd baobar
 go build -o baobar ./cmd/baobar
 ```
@@ -227,12 +273,17 @@ same freshness you already have.
 | Windows | `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o dist/baobar.exe ./cmd/baobar` | cross-compiles cleanly from macOS: pure-Go syscalls, no cgo. `-H=windowsgui` suppresses the console window that would otherwise flash on launch |
 | Linux | `GOOS=linux GOARCH=amd64 go build -o dist/baobar-linux ./cmd/baobar` | also cross-compiles cleanly from macOS as of `fyne.io/systray` v1.12.2, which talks to the tray over D-Bus (`StatusNotifierItem`) in pure Go rather than linking GTK/appindicator via cgo. No `gcc`/`libgtk-3-dev`/`libayatana-appindicator3-dev` were needed to produce the binary used here. That build has not yet been *run* on a Linux desktop, so treat "the tray actually appears" as unverified rather than "impossible without cgo" — if a future systray version reintroduces a cgo path, `apt-get install gcc libgtk-3-dev libayatana-appindicator3-dev` is the fallback for building on/for Linux |
 
-The Windows binary **builds** (cross-compiled from macOS as shown above) but has **not
-been run** on a Windows machine: the tray icon color change across states, the tooltip
-countdown, and the M2 login/autostart flows are implemented per the design docs linked
-below, but none of it has actually been eyeballed on Windows yet. Same caveat as Linux
-above — compiling is not the same as verifying any of this renders or runs correctly. Both
-remain open items pending a manual pass on real hardware.
+The **Windows `amd64`** binary has now been run on real hardware (Windows Server 2022): the
+tray icon, SSO login in a browser, the token being picked up by the `bao` CLI, registry
+autostart across a sign-out and sign-in, and the misconfiguration path all check out. That
+pass found the PNG-versus-ICO tray icon bug, which no amount of cross-compiling would have
+surfaced. **`windows_arm64` has still never been run** — AWS has no Windows-on-ARM
+instances, so it was not covered.
+
+The **Linux** binary still has **not been run** on a Linux desktop. Compiling is not
+verifying: whether the tray item appears at all depends on a session bus and a
+StatusNotifierItem-capable desktop, and that remains an open item
+([#5](https://github.com/BrutalSystems/baobar/issues/5)).
 
 ## Platform notes
 
