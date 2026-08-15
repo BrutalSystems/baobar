@@ -172,6 +172,11 @@ is no terminal to read.
 
 ## Configuration
 
+**You do not need to write this file by hand.** On first run, if no address is configured,
+Baobar opens a browser tab asking for your OpenBao server address, saves it, and carries on
+starting up. Everything below is for changing settings afterwards, or for setting the ones
+the first-run prompt deliberately does not ask about.
+
 Settings resolve from a config file first, then the environment, then a built-in default.
 The file lives at the OS-appropriate config directory (`os.UserConfigDir()`):
 
