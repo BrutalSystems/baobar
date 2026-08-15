@@ -1,0 +1,133 @@
+version: 2
+
+project_name: baobar
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  # macOS is built natively with cgo, and the whole release therefore runs on a
+  # macOS runner: fyne.io/systray's macOS backend is Objective-C
+  # (systray_darwin.m), so building it with CGO_ENABLED=0 drops the platform
+  # files and leaves undefined symbols. This is the same constraint that keeps
+  # darwin out of the cross-build job in ci.yml.
+  - id: darwin
+    main: ./cmd/baobar
+    binary: baobar
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    env:
+      - CGO_ENABLED=1
+      # GitHub's macOS runners are arm64. Targeting amd64 needs clang told
+      # which slice to emit; without it cgo compiles host-native objects and
+      # the link fails on an architecture mismatch.
+      - >-
+        {{- if eq .Arch "amd64" }}CC=clang -arch x86_64{{- end }}
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+  # Linux and Windows need no cgo, so they cross-compile from the same macOS
+  # runner.
+  - id: crossbuilt
+    main: ./cmd/baobar
+    binary: baobar
+    goos: [linux, windows]
+    goarch: [amd64, arm64]
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      # -H=windowsgui suppresses the console window that would otherwise flash
+      # on launch. It is a Windows-only linker flag.
+      - -s -w
+      - '{{ if eq .Os "windows" }}-H=windowsgui{{ end }}'
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+# One download for both Mac architectures. replace: true drops the two
+# single-arch macOS archives so the release does not offer three ways to
+# install the same thing.
+universal_binaries:
+  - id: darwin
+    ids: [darwin]
+    replace: true
+
+archives:
+  - id: default
+    ids: [darwin, crossbuilt]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}macOS{{ else }}{{ .Os }}{{ end }}
+      {{- if not (eq .Arch "all") }}_{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+      # Apache-2.0 and the BSD licenses require their notices to travel with
+      # binary redistributions, so this ships inside every archive rather than
+      # only living in the repository.
+      - THIRD_PARTY_LICENSES.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+# Signing and notarization. Apple requires both for a cask that is not going to
+# greet the user with "app is damaged and cannot be opened" — an unsigned tray
+# app is a bad first impression. The whole block is inert until the secrets
+# exist, so releases work today and start being signed the moment they are set,
+# with no config change.
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      ids: [darwin]
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 30m
+
+release:
+  github:
+    owner: BrutalSystems
+    name: baobar
+  draft: false
+  prerelease: auto
+
+# A cask rather than a formula: Baobar is a GUI menu bar app, not a CLI.
+homebrew_casks:
+  - name: baobar
+    ids: [default]
+    # Same inert-until-configured property as notarization: with no tap token
+    # the cask is still generated into dist/ but not pushed, so a release
+    # succeeds before the tap repository exists.
+    skip_upload: '{{ not (isEnvSet "HOMEBREW_TAP_TOKEN") }}'
+    repository:
+      owner: BrutalSystems
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/BrutalSystems/baobar"
+    description: "Menu bar indicator for OpenBao login state and token expiry"
+    commit_msg_template: "baobar {{ .Tag }}"
+    caveats: |
+      Baobar needs your OpenBao address. Set it in
+        ~/Library/Application Support/baobar/config.toml
+      as `addr = "https://openbao.example.com"`, or export VAULT_ADDR.
+
+      A config file is the durable option: "Start at login" runs Baobar from
+      launchd, which does not inherit your shell environment.

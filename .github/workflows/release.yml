@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # macOS, not Linux: the darwin build needs cgo because fyne.io/systray's
+    # macOS backend is Objective-C, and a macOS runner is also the only place
+    # codesign and notarytool exist. Linux and Windows cross-compile from here
+    # with CGO_ENABLED=0, so one runner covers every target.
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # GoReleaser derives the changelog from history; a shallow clone
+          # gives it nothing to diff against.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The release must not be the thing that discovers a broken build. CI
+      # runs this on every push, but a tag can be pushed to a commit CI never
+      # saw.
+      - name: Test
+        run: go test -race -count=1 ./...
+
+      # Regenerated rather than trusted from the repository: a dependency bump
+      # that lands without someone rerunning the script would otherwise ship
+      # archives whose notices are missing a component.
+      - name: Regenerate third-party licenses
+        run: |
+          go install github.com/google/go-licenses@latest
+          # GOBIN wins when set; otherwise go install lands in GOPATH/bin.
+          bin="$(go env GOBIN)"
+          [ -n "$bin" ] || bin="$(go env GOPATH)/bin"
+          echo "$bin" >>"$GITHUB_PATH"
+      - name: Write THIRD_PARTY_LICENSES.md
+        run: tools/gen-third-party-licenses.sh
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # A PAT with contents:write on the tap repository. GITHUB_TOKEN
+          # cannot push to another repo. Absent, the cask is built but not
+          # published and the release still succeeds.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+          # Apple signing and notarization. Every one of these is optional:
+          # .goreleaser.yaml gates the whole block on MACOS_SIGN_P12 being set
+          # AND non-empty, which is exactly what an undefined secret produces
+          # here. Until they exist, releases are unsigned and macOS will warn
+          # users that the app is damaged.
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
