@@ -125,12 +125,17 @@ homebrew_casks:
     description: "Menu bar indicator for OpenBao login state and token expiry"
     commit_msg_template: "baobar {{ .Tag }}"
     caveats: |
-      Baobar needs your OpenBao address. Set it in
-        ~/Library/Application Support/baobar/config.toml
-      as `addr = "https://openbao.example.com"`, or export VAULT_ADDR.
+      Just run Baobar — on first start it opens a browser tab asking for your
+      OpenBao address, saves it, and carries on. There is no file to write.
 
-      A config file is the durable option: "Start at login" runs Baobar from
-      launchd, which does not inherit your shell environment.
+      Expect that prompt even if VAULT_ADDR is set in your shell: "Start at
+      login" runs Baobar from launchd, which does not inherit your shell
+      environment. Answering once stores the address where launchd can see it.
+
+      To change it later, or to prefill the login form with your username:
+        ~/Library/Application Support/baobar/config.toml
+        addr = "https://openbao.example.com"
+        username = "you"
 
 # winget manifests. Unlike Chocolatey this pipe is pure Go and needs no
 # external CLI, so it runs in the macOS release job alongside everything else.
