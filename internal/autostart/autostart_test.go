@@ -3,6 +3,7 @@ package autostart
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,6 +163,175 @@ func TestLinuxDesktopEscapesShell(t *testing.T) {
 	// $ should be escaped
 	if !strings.Contains(content, `\$SHELL`) {
 		t.Error("$ not properly escaped in desktop file")
+	}
+}
+
+// The bug this guards: the entry records an absolute path at Enable() time,
+// and nothing keeps that path valid afterwards. A build in /tmp that macOS
+// later purges leaves a well-formed plist pointing at nothing — launchd
+// fails the spawn with EX_CONFIG and the checkbox still reads "on". Existence
+// of the entry is not the state the user cares about; the program being
+// there to run is.
+func TestEnabledIsFalseWhenTheRecordedProgramIsGone(t *testing.T) {
+	dir := t.TempDir()
+	program := filepath.Join(dir, "baobar")
+	if err := os.WriteFile(program, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &fileAutostart{
+		path:   filepath.Join(dir, "entry"),
+		exe:    func() (string, error) { return program, nil },
+		render: func(exe string) []byte { return []byte("run " + exe + "\n") },
+		target: func(entry []byte) (string, bool) {
+			return strings.TrimSpace(strings.TrimPrefix(string(entry), "run ")), true
+		},
+	}
+
+	// Written directly rather than through Enable: t.TempDir() is itself a
+	// volatile location, which Enable now refuses by design. The subject here
+	// is Enabled, so the entry is staged the way a past Enable would have
+	// left it, using the same renderer.
+	if err := os.WriteFile(a.path, a.render(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if on, err := a.Enabled(); err != nil || !on {
+		t.Fatalf("Enabled() = %v, %v — want true while the program exists", on, err)
+	}
+
+	// The program goes away; the entry does not.
+	if err := os.Remove(program); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(a.path); err != nil {
+		t.Fatalf("entry should still exist: %v", err)
+	}
+
+	on, err := a.Enabled()
+	if err != nil {
+		t.Fatalf("Enabled: %v", err)
+	}
+	if on {
+		t.Error("Enabled() = true for an entry whose program no longer exists")
+	}
+}
+
+// Recording a path under a temp directory produces exactly the failure above,
+// so it is refused at the point the user asks for it, while there is still a
+// human present to be told why.
+func TestEnableRefusesAVolatileExecutablePath(t *testing.T) {
+	volatilePaths := []string{
+		"/tmp/baobar",
+		"/private/tmp/baobar",
+		"/var/folders/xy/T/baobar",
+		`C:\Users\me\AppData\Local\Temp\baobar.exe`,
+		"/var/folders/1z/go-build123/b001/exe/baobar",
+	}
+
+	for _, exe := range volatilePaths {
+		t.Run(exe, func(t *testing.T) {
+			dir := t.TempDir()
+			a := &fileAutostart{
+				path:   filepath.Join(dir, "entry"),
+				exe:    func() (string, error) { return exe, nil },
+				render: func(exe string) []byte { return []byte(exe) },
+			}
+
+			err := a.Enable()
+			if err == nil {
+				t.Fatalf("Enable accepted a volatile path %q", exe)
+			}
+			if !errors.Is(err, ErrVolatilePath) {
+				t.Errorf("error = %v — want it to wrap ErrVolatilePath", err)
+			}
+			if _, statErr := os.Stat(a.path); !os.IsNotExist(statErr) {
+				t.Error("an entry was written despite the refusal")
+			}
+			if on, _ := a.Enabled(); on {
+				t.Error("Enabled() reports true after a refused Enable")
+			}
+		})
+	}
+}
+
+func TestEnableAcceptsAStableExecutablePath(t *testing.T) {
+	stablePaths := []string{
+		"/usr/local/bin/baobar",
+		"/Applications/Baobar.app/Contents/MacOS/baobar",
+		"/home/me/bin/baobar",
+		`C:\Program Files\Baobar\baobar.exe`,
+		"/Users/me/go/bin/baobar",
+	}
+
+	for _, exe := range stablePaths {
+		t.Run(exe, func(t *testing.T) {
+			dir := t.TempDir()
+			a := &fileAutostart{
+				path:   filepath.Join(dir, "entry"),
+				exe:    func() (string, error) { return exe, nil },
+				render: func(exe string) []byte { return []byte(exe) },
+			}
+			if err := a.Enable(); err != nil {
+				t.Fatalf("Enable rejected a stable path %q: %v", exe, err)
+			}
+		})
+	}
+}
+
+// The extractors are what make Enabled() honest on each platform, so they are
+// tested against the real renderers rather than against a hand-written sample
+// that could drift from what Enable actually writes.
+func TestPlistTargetReadsBackWhatRenderPlistWrote(t *testing.T) {
+	for _, exe := range []string{
+		"/usr/local/bin/baobar",
+		"/Applications/My & Co/baobar",
+		"/opt/a<b>c/baobar",
+	} {
+		got, ok := plistTarget(renderPlist(label, exe))
+		if !ok {
+			t.Errorf("plistTarget could not read back %q", exe)
+			continue
+		}
+		if got != exe {
+			t.Errorf("plistTarget = %q, want %q", got, exe)
+		}
+	}
+}
+
+func TestDesktopTargetReadsBackWhatRenderDesktopWrote(t *testing.T) {
+	for _, exe := range []string{
+		"/usr/local/bin/baobar",
+		"/opt/My App/baobar",
+		`/opt/weird$SHELL/baobar`,
+		`/opt/quo"te/baobar`,
+	} {
+		got, ok := desktopTarget(renderDesktop(exe))
+		if !ok {
+			t.Errorf("desktopTarget could not read back %q", exe)
+			continue
+		}
+		if got != exe {
+			t.Errorf("desktopTarget = %q, want %q", got, exe)
+		}
+	}
+}
+
+// The Windows Run value is written quoted (a path with a space is otherwise
+// split into argv tokens). Enabled has to undo that before it can stat the
+// program, so the inverse is kept next to the renderers and tested from any
+// platform — the registry itself cannot be exercised off Windows.
+func TestRegistryTargetUnquotes(t *testing.T) {
+	for _, tc := range []struct{ value, want string }{
+		{`"C:\Program Files\Baobar\baobar.exe"`, `C:\Program Files\Baobar\baobar.exe`},
+		{`C:\Baobar\baobar.exe`, `C:\Baobar\baobar.exe`},
+	} {
+		got, ok := registryTarget(tc.value)
+		if !ok || got != tc.want {
+			t.Errorf("registryTarget(%q) = %q, %v — want %q, true", tc.value, got, ok, tc.want)
+		}
+	}
+	if _, ok := registryTarget(""); ok {
+		t.Error("registryTarget(\"\") = ok — an empty value names no program")
 	}
 }
 

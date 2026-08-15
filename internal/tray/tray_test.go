@@ -2,7 +2,11 @@ package tray
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/BrutalSystems/baobar/internal/autostart"
 )
 
 // startAtLoginOutcome must derive the checkbox's post-toggle state from ONLY
@@ -55,5 +59,29 @@ func TestOptionsStartAtLoginNilFieldsDoNotPanic(t *testing.T) {
 	}
 	if err := o.toggleStartAtLogin(true); err == nil {
 		t.Error("toggleStartAtLogin() with nil field = nil error, want a non-nil error")
+	}
+}
+
+// A refused toggle carries the one thing the user needs to act on: which
+// location was rejected and what to do instead. Collapsing that into the
+// generic message strands them with a checkbox that will not stay on and no
+// stated reason — the failure mode that produced a plist pointing at /tmp.
+func TestStartAtLoginAlertExplainsAVolatilePath(t *testing.T) {
+	err := fmt.Errorf("%w: /tmp/baobar is a temporary location", autostart.ErrVolatilePath)
+
+	msg := startAtLoginMessage(err)
+
+	if !strings.Contains(msg, "/tmp/baobar") {
+		t.Errorf("message does not name the rejected path: %q", msg)
+	}
+	if msg == "Could not change the setting." {
+		t.Error("volatile-path refusal fell back to the generic message")
+	}
+}
+
+func TestStartAtLoginAlertFallsBackForUnknownErrors(t *testing.T) {
+	msg := startAtLoginMessage(errors.New("permission denied"))
+	if msg != "Could not change the setting." {
+		t.Errorf("startAtLoginMessage = %q — want the generic message", msg)
 	}
 }

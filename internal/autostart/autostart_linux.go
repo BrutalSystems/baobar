@@ -15,5 +15,6 @@ func New() (Autostart, error) {
 		path:   filepath.Join(dir, "autostart", "baobar.desktop"),
 		exe:    os.Executable,
 		render: renderDesktop,
+		target: desktopTarget,
 	}, nil
 }

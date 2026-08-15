@@ -7,8 +7,10 @@ package autostart
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Autostart interface {
@@ -20,22 +22,43 @@ type Autostart interface {
 	Disable() error
 }
 
+// ErrVolatilePath reports an executable whose location will not survive to
+// the next login.
+var ErrVolatilePath = errors.New("volatile executable path")
+
 // fileAutostart covers every platform whose mechanism is "write a file".
 type fileAutostart struct {
 	path   string
 	exe    func() (string, error)
 	render func(exe string) []byte
+	// target extracts the program path back out of a rendered entry, so
+	// Enabled can check that it still exists. A nil target skips that check.
+	target func(entry []byte) (string, bool)
 }
 
 func (a *fileAutostart) Enabled() (bool, error) {
-	_, err := os.Stat(a.path)
-	if err == nil {
-		return true, nil
-	}
+	entry, err := os.ReadFile(a.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
-	return false, err
+	if err != nil {
+		return false, err
+	}
+	if a.target == nil {
+		return true, nil
+	}
+	exe, ok := a.target(entry)
+	if !ok {
+		// An entry we cannot read back is one we cannot vouch for.
+		return false, nil
+	}
+	if _, err := os.Stat(exe); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func (a *fileAutostart) Enable() error {
@@ -43,10 +66,45 @@ func (a *fileAutostart) Enable() error {
 	if err != nil {
 		return err
 	}
+	if err := checkStablePath(exe); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(a.path), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(a.path, a.render(exe), 0o644)
+}
+
+// volatilePrefixes are locations the OS empties out from under a running
+// binary. Recording one produces an entry that is valid, loads at login, and
+// fails the spawn — the exact EX_CONFIG failure this guard exists to prevent.
+var volatilePrefixes = []string{
+	"/tmp/",
+	"/private/tmp/",
+	"/var/folders/", // macOS per-user TMPDIR
+	"/private/var/folders/",
+	"/appdata/local/temp/", // Windows %TEMP%
+	"/go-build",            // `go run` / `go build` scratch output
+}
+
+// checkStablePath refuses an executable that will not still be there at the
+// next login. The check is on the string, not the filesystem, so it behaves
+// identically on every platform and is testable from any one of them.
+func checkStablePath(exe string) error {
+	// Backslashes are normalised explicitly: filepath.ToSlash is a no-op off
+	// Windows, so it would leave a Windows path unmatched everywhere else and
+	// make this check pass on macOS while failing in CI.
+	norm := strings.ToLower(strings.ReplaceAll(exe, `\`, "/"))
+	prefixes := volatilePrefixes
+	if tmp := strings.ToLower(strings.ReplaceAll(os.TempDir(), `\`, "/")); tmp != "" && tmp != "/" {
+		prefixes = append(append([]string{}, prefixes...), strings.TrimSuffix(tmp, "/")+"/")
+	}
+	for _, p := range prefixes {
+		if strings.Contains(norm, p) {
+			return fmt.Errorf("%w: %s is a temporary location that will be empty at your next login; install Baobar somewhere permanent (for example /usr/local/bin) and enable this again", ErrVolatilePath, exe)
+		}
+	}
+	return nil
 }
 
 func (a *fileAutostart) Disable() error {

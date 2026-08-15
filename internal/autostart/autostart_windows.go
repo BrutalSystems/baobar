@@ -26,8 +26,23 @@ func (registryAutostart) Enabled() (bool, error) {
 	}
 	defer k.Close()
 
-	if _, _, err := k.GetStringValue(valueName); err != nil {
+	value, _, err := k.GetStringValue(valueName)
+	if err != nil {
 		if errors.Is(err, registry.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	// The value existing is not the state the user cares about; the program
+	// being there to run is. A Run value pointing at a deleted binary fails
+	// silently at login, so it reports as not enabled.
+	exe, ok := registryTarget(value)
+	if !ok {
+		return false, nil
+	}
+	if _, err := os.Stat(exe); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
 		}
 		return false, err
@@ -38,6 +53,9 @@ func (registryAutostart) Enabled() (bool, error) {
 func (registryAutostart) Enable() error {
 	exe, err := os.Executable()
 	if err != nil {
+		return err
+	}
+	if err := checkStablePath(exe); err != nil {
 		return err
 	}
 	k, _, err := registry.CreateKey(registry.CURRENT_USER, runKey, registry.SET_VALUE)

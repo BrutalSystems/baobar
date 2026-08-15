@@ -16,5 +16,6 @@ func New() (Autostart, error) {
 		path:   filepath.Join(home, "Library", "LaunchAgents", label+".plist"),
 		exe:    os.Executable,
 		render: func(exe string) []byte { return renderPlist(label, exe) },
+		target: plistTarget,
 	}, nil
 }

@@ -9,6 +9,7 @@ import (
 	"fyne.io/systray"
 
 	"github.com/BrutalSystems/baobar/internal/authflow"
+	"github.com/BrutalSystems/baobar/internal/autostart"
 	"github.com/BrutalSystems/baobar/internal/bao"
 )
 
@@ -90,6 +91,17 @@ func (o Options) toggleStartAtLogin(on bool) error {
 // own pure, directly testable function rather than left inline in uiLoop.
 func startAtLoginOutcome(toggleErr error, onDisk bool) (checked, needsAlert bool) {
 	return onDisk, toggleErr != nil
+}
+
+// startAtLoginMessage is the alert body for a failed toggle. Most failures
+// are OS errors whose text means nothing to the user, hence the generic
+// default; a refused executable location is the exception, because it is the
+// only one the user can act on and the action is not guessable.
+func startAtLoginMessage(toggleErr error) string {
+	if errors.Is(toggleErr, autostart.ErrVolatilePath) {
+		return toggleErr.Error()
+	}
+	return "Could not change the setting."
 }
 
 // holder passes the latest Status from the poll goroutine to the UI goroutine.
@@ -357,7 +369,7 @@ func uiLoop(o Options, h *holder, refreshCh, loginDone chan struct{}, m menuItem
 			toggleErr := o.toggleStartAtLogin(want)
 			checked, needsAlert := startAtLoginOutcome(toggleErr, o.startAtLoginEnabled())
 			if needsAlert {
-				o.alert("Start at login", "Could not change the setting.")
+				o.alert("Start at login", startAtLoginMessage(toggleErr))
 			}
 			if checked {
 				m.startAtLogin.Check()
