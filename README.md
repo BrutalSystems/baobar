@@ -34,12 +34,23 @@ M1 and M2 are code-complete: all internal packages (`bao`, `config`, `notify`, `
 `-race`; `go build`, `go vet`, and `gofmt` are clean; macOS, Windows, and Linux binaries all
 cross-compile.
 
-**Verified by running it on macOS against a live OpenBao server** (one M1 session, before
-M2's login work began): the tray item appeared, the `Expiring` state rendered correctly
-with its countdown, the menu showed identity/policies/expiry, the signed-out state
-rendered, and the audit-log throttle held — over 100 seconds of runtime the cached
+**Verified by running it on macOS against a live OpenBao server.** An M1 session first,
+before M2's login work began: the tray item appeared, the `Expiring` state rendered
+correctly with its countdown, the menu showed identity/policies/expiry, the signed-out
+state rendered, and the audit-log throttle held — over 100 seconds of runtime the cached
 `checked_at` never moved while the countdown kept ticking, i.e. one server request, not one
 per second.
+
+A later M2 session covered the login work itself, all against the same live server:
+
+- **Userpass + TOTP login**, including OpenBao's two-phase MFA exchange, in the browser
+  form Baobar serves on loopback. No terminal at any point.
+- **SSO/OIDC login** end to end: browser → identity provider → loopback callback → token,
+  picked up by the tray within a second.
+- **Logout**, confirmed by a real `revoke-self` and a revoked lease in the audit log.
+- **The audit-log invariant**, twice: ~2 requests per 10 minutes of runtime while the
+  countdown ticked every second, and — importantly — 2 requests in 5 minutes with an
+  *expired* token on disk, the exact case that once produced one request per second.
 
 **Verified on Windows Server 2022 against the same live server:** the tray icon renders;
 SSO login runs end to end in a real browser; the token Baobar writes is picked up by the
