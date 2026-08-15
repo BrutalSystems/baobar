@@ -144,6 +144,25 @@ codesign --test-requirement="=notarized" -vv "$(brew --prefix)/bin/baobar"
 If you are on v0.1.1 or earlier, upgrade — those binaries were unsigned, and Gatekeeper
 offered to move them to the Trash.
 
+#### Why the signature says Springthrough
+
+Verifying a macOS build shows a name that is not BrutalSystems:
+
+```
+$ codesign -dv --verbose=2 "$(brew --prefix)/bin/baobar"
+Authority=Developer ID Application: Springthrough Consulting Inc. (7CQD3Q2Y8Z)
+TeamIdentifier=7CQD3Q2Y8Z
+```
+
+**This is expected, not a compromised build.** Baobar is published by BrutalSystems, but is
+currently signed with Springthrough Consulting's Apple Developer identity — the two share an
+owner, and a separate BrutalSystems Apple team does not exist yet. Team ID `7CQD3Q2Y8Z` is
+the value to expect; treat anything else as suspect.
+
+This is temporary. When BrutalSystems has its own Apple team the Team ID will change, and
+that change will be called out in the release notes — a signing identity that changes
+without explanation is exactly the thing you should not accept quietly.
+
 ### Download a release
 
 Binaries for macOS (universal), Linux and Windows:
@@ -316,6 +335,21 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). It is most
 the invariants that are easy to break by accident, each of which has a real failure behind
 it. [`docs/NEXT.md`](docs/NEXT.md) has the current outstanding work; the platform-verification
 items are good places to start.
+
+### Who publishes this
+
+Baobar is owned and published by **BrutalSystems**, and the MIT licence is held by
+BrutalSystems. Two things currently point elsewhere, and both are deliberate rather than
+oversights:
+
+- **macOS builds are signed with Springthrough Consulting's Apple Developer identity**
+  (Team ID `7CQD3Q2Y8Z`) — see [above](#why-the-signature-says-springthrough). The two
+  companies share an owner; a BrutalSystems Apple team does not exist yet.
+- **Commits are authored from a personal account** rather than an organisation address.
+
+Neither affects the licence, which is MIT: you can use, modify and redistribute this
+regardless of who signed a given build. If the signing identity changes, it will be stated
+in the release notes rather than left for you to notice.
 
 ## License
 
