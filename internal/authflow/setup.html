@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset=utf-8>
+<title>Set up Baobar</title>
+<body style="font:16px system-ui;padding:3rem;max-width:32rem;margin:auto">
+<h1 style="font-size:1.25rem">Set up Baobar</h1>
+<p>Baobar needs the address of your OpenBao server.</p>
+{{if .Error}}<p style="color:#b00020"><strong>{{.Error}}</strong></p>{{end}}
+<form method=post>
+  <label for=addr>OpenBao address</label>
+  <input id=addr name=addr type=url value="{{.Addr}}" placeholder="https://openbao.example.com"
+         required autofocus style="display:block;width:100%;padding:.6rem;margin:.5rem 0 1rem;font:inherit">
+  <button type=submit style="padding:.6rem 1.2rem;font:inherit">Save</button>
+</form>
+<p style="color:#666;font-size:.875rem">Saved to your Baobar config file. You can change it there later.</p>

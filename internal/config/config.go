@@ -62,15 +62,15 @@ type Config struct {
 }
 
 type fileConfig struct {
-	Addr    string `toml:"addr"`
-	Recheck string `toml:"recheck"`
-	Warn    string `toml:"warn"`
+	Addr    string `toml:"addr,omitempty"`
+	Recheck string `toml:"recheck,omitempty"`
+	Warn    string `toml:"warn,omitempty"`
 
-	OIDCMount     string `toml:"oidc_mount"`
-	OIDCRole      string `toml:"oidc_role"`
-	UserpassMount string `toml:"userpass_mount"`
-	CallbackPort  string `toml:"callback_port"`
-	Username      string `toml:"username"`
+	OIDCMount     string `toml:"oidc_mount,omitempty"`
+	OIDCRole      string `toml:"oidc_role,omitempty"`
+	UserpassMount string `toml:"userpass_mount,omitempty"`
+	CallbackPort  string `toml:"callback_port,omitempty"`
+	Username      string `toml:"username,omitempty"`
 }
 
 // Load resolves settings with the file taking precedence over the environment.
@@ -207,4 +207,56 @@ func DefaultPaths() (configPath, tokenPath, cachePath string, err error) {
 		filepath.Join(home, ".vault-token"),
 		filepath.Join(cacheDir, "baobar", "status.json"),
 		nil
+}
+
+// SaveAddr persists addr to the config file so first-run setup does not require
+// the user to hand-write TOML.
+//
+// It validates before writing: an address Load would later reject must never
+// reach disk, or the next launch starts into a config it cannot use — the same
+// dead end this is meant to remove.
+//
+// An existing file is read first and re-encoded with the new address, so
+// settings someone put there by hand survive. The write goes through a
+// temporary file in the same directory and is renamed into place, so an
+// interrupted save cannot leave a half-written config.
+func SaveAddr(path, addr string) error {
+	addr = strings.TrimSuffix(strings.TrimSpace(addr), "/")
+	if addr == "" {
+		return ErrNoAddr
+	}
+	if err := ValidateAddr(addr); err != nil {
+		return err
+	}
+
+	var fc fileConfig
+	if _, err := os.Stat(path); err == nil {
+		if _, err := toml.DecodeFile(path, &fc); err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+	}
+	fc.Addr = addr
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(dir, ".config-*.toml")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+
+	if err := toml.NewEncoder(tmp).Encode(fc); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }

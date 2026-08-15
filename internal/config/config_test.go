@@ -242,3 +242,59 @@ func TestLoadAcceptsValidCallbackPort(t *testing.T) {
 		t.Errorf("CallbackPort = %d, want 65535", c.CallbackPort)
 	}
 }
+
+// SaveAddr exists so first-run setup can persist an address without the user
+// hand-writing TOML. It validates before writing: an address the app would
+// later refuse to load must never reach disk, or the app would start into a
+// config it cannot use.
+func TestSaveAddrRoundTripsThroughLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "config.toml")
+
+	if err := SaveAddr(path, "https://bao.example.com"); err != nil {
+		t.Fatalf("SaveAddr: %v", err)
+	}
+
+	c, err := Load(path, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("Load after SaveAddr: %v", err)
+	}
+	if c.Addr != "https://bao.example.com" {
+		t.Errorf("Addr = %q, want https://bao.example.com", c.Addr)
+	}
+}
+
+func TestSaveAddrRejectsABadAddressWithoutWriting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+
+	if err := SaveAddr(path, "not a url at all"); err == nil {
+		t.Fatal("SaveAddr accepted an address Load would reject")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("a rejected address was still written to disk")
+	}
+}
+
+// A config file can already exist with other settings and no addr — someone who
+// set recheck by hand, then installed a build with first-run setup. Writing the
+// address must not silently discard the rest.
+func TestSaveAddrPreservesOtherSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("recheck = \"10m\"\nusername = \"dev\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveAddr(path, "https://bao.example.com"); err != nil {
+		t.Fatalf("SaveAddr: %v", err)
+	}
+
+	c, err := Load(path, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Recheck != 10*time.Minute {
+		t.Errorf("Recheck = %v, want 10m — SaveAddr discarded an existing setting", c.Recheck)
+	}
+	if c.Username != "dev" {
+		t.Errorf("Username = %q, want dev", c.Username)
+	}
+}

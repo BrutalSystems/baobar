@@ -29,6 +29,26 @@ func main() {
 	}
 
 	cfg, err := config.Load(cfgPath, os.Getenv)
+	if errors.Is(err, config.ErrNoAddr) {
+		// First run. Ask in the browser rather than sending the user to a
+		// terminal to hand-write TOML — the whole point of Baobar is that you
+		// do not need one. Nothing is running yet, so there is no poller or
+		// cached status to reconcile: on success we simply load again and
+		// continue as though the file had been there all along.
+		//
+		// Any failure here — the user closes the tab, the browser will not
+		// open, the write fails — falls through to the tray item below, which
+		// still names the problem and the config path. First-run setup can
+		// only improve on that path, never replace it.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		if _, serr := authflow.Setup(ctx, authflow.SetupConfig{
+			OpenURL: openURL,
+			Save:    func(addr string) error { return config.SaveAddr(cfgPath, addr) },
+		}); serr == nil {
+			cfg, err = config.Load(cfgPath, os.Getenv)
+		}
+		cancel()
+	}
 	if err != nil {
 		tray.Run(tray.Options{ConfigError: fmt.Sprintf("%v (config: %s)", err, cfgPath)})
 		return
