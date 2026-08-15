@@ -163,6 +163,24 @@ This is temporary. When BrutalSystems has its own Apple team the Team ID will ch
 that change will be called out in the release notes — a signing identity that changes
 without explanation is exactly the thing you should not accept quietly.
 
+### Windows
+
+A [Chocolatey package](https://community.chocolatey.org/packages/baobar) has been submitted
+and is awaiting moderation. Until it is approved, `choco install baobar` will not find it —
+use the archive:
+
+1. Download `baobar_<version>_windows_amd64.zip` from
+   [the latest release](https://github.com/BrutalSystems/baobar/releases/latest)
+2. Extract it somewhere permanent — **not** Downloads or a temp folder. "Start at login"
+   deliberately refuses a path under `%TEMP%`, because Windows empties it and the entry
+   would silently stop working
+3. Run `baobar.exe`. A browser tab opens asking for your OpenBao address
+
+Windows binaries are not yet Authenticode-signed
+([#11](https://github.com/BrutalSystems/baobar/issues/11)), so SmartScreen may warn the
+first time you run one. `windows_arm64` is published but has never been run on
+Windows-on-ARM hardware.
+
 ### Download a release
 
 Binaries for macOS (universal), Linux and Windows:
