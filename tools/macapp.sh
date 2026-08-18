@@ -95,9 +95,46 @@ cmd_verify() {
   spctl -a -vv -t exec "$app" || true
 }
 
+cmd_notarize() {
+  local app="${1:?usage: notarize <app> <version> [outdir]}"
+  local version="${2:?usage: notarize <app> <version> [outdir]}"
+  local outdir="${3:-dist}"
+  local zip="$outdir/Baobar-$(numeric_version "$version")-macOS.zip"
+
+  : "${APPLE_NOTARY_KEY_FILE:?set APPLE_NOTARY_KEY_FILE to the AuthKey .p8 path}"
+  : "${APPLE_NOTARY_KEY_ID:?set APPLE_NOTARY_KEY_ID}"
+  : "${APPLE_NOTARY_ISSUER_ID:?set APPLE_NOTARY_ISSUER_ID}"
+
+  # notarytool takes an archive, not a bundle. ditto is the required tool here:
+  # `zip` does not preserve the symlinks and extended attributes inside a
+  # bundle, and the result fails notarization for reasons that read as unrelated.
+  local submit="$outdir/notarize-submission.zip"
+  ditto -c -k --keepParent "$app" "$submit"
+
+  xcrun notarytool submit "$submit" \
+    --key "$APPLE_NOTARY_KEY_FILE" \
+    --key-id "$APPLE_NOTARY_KEY_ID" \
+    --issuer "$APPLE_NOTARY_ISSUER_ID" \
+    --wait
+  rm -f "$submit"
+
+  # The ticket staples to the bundle, not to the archive — so the app must be
+  # stapled first and re-zipped afterwards. Zipping before stapling produces an
+  # archive that passes notarization and still warns the user on first launch
+  # if they are offline. This ordering is the whole reason the step exists.
+  xcrun stapler staple "$app"
+  xcrun stapler validate "$app"
+
+  rm -f "$zip"
+  ditto -c -k --keepParent "$app" "$zip"
+  printf 'notarized and stapled: %s\n' "$zip"
+  shasum -a 256 "$zip"
+}
+
 case "${1:-}" in
   bundle) shift; cmd_bundle "$@" ;;
   sign) shift; cmd_sign "$@" ;;
+  notarize) shift; cmd_notarize "$@" ;;
   verify) shift; cmd_verify "$@" ;;
   *) die "usage: macapp.sh {bundle|sign|verify} ..." ;;
 esac
