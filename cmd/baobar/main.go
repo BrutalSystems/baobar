@@ -118,7 +118,8 @@ func main() {
 				userpass: authflow.UserpassBrowser,
 				oidcConfig: authflow.OIDCConfig{
 					Addr: cfg.Addr, Mount: cfg.OIDCMount, Role: cfg.OIDCRole,
-					CallbackPort: cfg.CallbackPort, OpenURL: openURL,
+					CallbackPort: cfg.CallbackPort, Prompt: cfg.OIDCPrompt,
+					OpenURL: openURL,
 				},
 				userpassConfig: authflow.UserpassBrowserConfig{
 					Userpass:        authflow.UserpassConfig{Addr: cfg.Addr, Mount: cfg.UserpassMount},

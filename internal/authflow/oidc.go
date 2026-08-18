@@ -20,9 +20,12 @@ type OIDCConfig struct {
 	// randomised: a different port would fail the provider's redirect check
 	// later, far from the cause.
 	CallbackPort int
-	HTTP         *http.Client
-	OpenURL      func(string) error
-	Timeout      time.Duration
+	// Prompt, when set, is sent to the identity provider as the OIDC `prompt`
+	// parameter. Empty leaves the provider's URL untouched.
+	Prompt  string
+	HTTP    *http.Client
+	OpenURL func(string) error
+	Timeout time.Duration
 }
 
 func (c OIDCConfig) client() *http.Client {
@@ -95,11 +98,42 @@ func OIDC(ctx context.Context, cfg OIDCConfig) (string, error) {
 		s.finish(token, nil)
 	})
 
-	if err := cfg.OpenURL(authURL); err != nil {
+	if err := cfg.OpenURL(withPrompt(authURL, cfg.Prompt)); err != nil {
 		s.finish("", fmt.Errorf("open browser: %w", err))
 	}
 
 	return s.serve(ctx)
+}
+
+// withPrompt sets the OIDC `prompt` parameter on the provider URL OpenBao
+// built. Empty returns raw untouched, so the default costs nothing.
+//
+// It exists because the browser reuses whatever provider session is already
+// open. Someone signed in to several work accounts gets one chosen for them
+// silently, and a wrong choice does not fail here — it fails later, in the
+// code exchange, as a claim the role wanted and the token does not carry.
+// "select_account" turns that into a visible question.
+//
+// A configured prompt overrides one already in the URL: it is the more
+// specific, user-facing choice, and silently losing to the server would make
+// the setting look broken. An unparseable URL is returned unchanged rather
+// than rejected — it came from OpenBao, and the browser is a better place to
+// discover it is malformed than a rewrite helper.
+func withPrompt(raw, prompt string) string {
+	if prompt == "" {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	q := u.Query()
+	q.Set("prompt", prompt)
+	// Re-encoding canonicalises parameter order. Authorization endpoints treat
+	// the query as an unordered set, and every value here survives a round
+	// trip through url.Values, so this is safe.
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func (c OIDCConfig) authURL(ctx context.Context, redirectURI, clientNonce string) (string, error) {

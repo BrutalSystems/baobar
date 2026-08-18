@@ -275,6 +275,7 @@ oidc_role = ""
 userpass_mount = "userpass"
 callback_port = 8250
 username = ""
+oidc_prompt = "select_account"
 ```
 
 | Setting | Env var | Default | Notes |
@@ -287,6 +288,14 @@ username = ""
 | Userpass mount | `BAOBAR_USERPASS_MOUNT` | `userpass` | auth mount path used for password + TOTP login |
 | Callback port | `BAOBAR_CALLBACK_PORT` | `8250` | port Baobar listens on for the OIDC redirect — see below, this must match the role |
 | Username | `BAOBAR_USERNAME` | *(empty)* | prefills the username field on the password + TOTP form; it is never treated as a credential and never sent anywhere by itself |
+| OIDC prompt | `BAOBAR_OIDC_PROMPT` | `select_account` | sent to the identity provider as the OIDC `prompt` parameter; set to `""` to send none |
+
+**`oidc_prompt` defaults to asking which account to use.** Login happens in your system
+browser, which reuses whatever identity-provider session is already open. On a machine
+signed in to more than one work account that picks one silently, and a wrong pick does not
+fail at the browser — it fails afterwards, in the code exchange, as a claim the role wanted
+and the token does not carry. Asking makes the choice visible. On a single-account machine
+it costs one click; `oidc_prompt = ""` restores the old behaviour.
 
 **`callback_port` must match the OIDC role's allowed redirect URI.** Baobar sends
 `http://localhost:<callback_port>/oidc/callback` — the same form the `bao` CLI uses, so a

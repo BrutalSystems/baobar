@@ -133,6 +133,58 @@ func TestLoadAuthDefaults(t *testing.T) {
 	}
 }
 
+// The browser picks up whatever identity-provider session is already open, so
+// on a machine with more than one work account it can sign in as the wrong one
+// without asking. Defaulting to the account chooser makes that visible; the
+// cost is one click on machines with a single account.
+func TestLoadDefaultsToTheAccountChooser(t *testing.T) {
+	c, err := Load("", env(map[string]string{"VAULT_ADDR": "https://bao.example.com"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.OIDCPrompt != DefaultOIDCPrompt {
+		t.Errorf("OIDCPrompt = %q, want %q", c.OIDCPrompt, DefaultOIDCPrompt)
+	}
+}
+
+// An explicitly empty oidc_prompt must be distinguishable from an absent one,
+// or there is no way to turn the default back off.
+func TestLoadEmptyOIDCPromptDisablesIt(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(p, []byte("addr = \"https://bao.example.com\"\noidc_prompt = \"\"\n"), 0o600)
+
+	c, err := Load(p, env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.OIDCPrompt != "" {
+		t.Errorf("OIDCPrompt = %q, want empty — an explicit \"\" must disable the default", c.OIDCPrompt)
+	}
+}
+
+func TestLoadOIDCPromptFromFileAndEnv(t *testing.T) {
+	c, err := Load("", env(map[string]string{
+		"VAULT_ADDR":         "https://bao.example.com",
+		"BAOBAR_OIDC_PROMPT": "login",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.OIDCPrompt != "login" {
+		t.Errorf("OIDCPrompt = %q, want login (from env)", c.OIDCPrompt)
+	}
+
+	p := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(p, []byte("addr = \"https://bao.example.com\"\noidc_prompt = \"consent\"\n"), 0o600)
+	c, err = Load(p, env(map[string]string{"BAOBAR_OIDC_PROMPT": "login"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.OIDCPrompt != "consent" {
+		t.Errorf("OIDCPrompt = %q, want consent (file beats env)", c.OIDCPrompt)
+	}
+}
+
 func TestLoadAuthFromEnv(t *testing.T) {
 	c, err := Load("", env(map[string]string{
 		"VAULT_ADDR":            "https://bao.example.com",
