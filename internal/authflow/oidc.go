@@ -167,7 +167,15 @@ func (c OIDCConfig) exchange(ctx context.Context, state, code, clientNonce strin
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("exchange code: unexpected status %d", resp.StatusCode)
+		// Like auth_url above, OpenBao names the problem precisely here, and it
+		// is nearly always configuration the user can fix — a role whose
+		// user_claim the identity provider never emits, a bound claim that does
+		// not match. Only the server's `errors` array is taken, bounded and
+		// escaped before display; the response body is never surfaced verbatim.
+		// This request does carry an authorization code, but the code travels in
+		// the URL we built, not in the reply being read, so nothing of ours is
+		// echoed back through this path.
+		return "", configProblemFrom(resp)
 	}
 
 	var body struct {
