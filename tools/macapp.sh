@@ -70,7 +70,34 @@ PLIST
   printf 'built %s (version %s)\n' "$app" "$short"
 }
 
+cmd_sign() {
+  local app="${1:?usage: sign <app>}"
+  [ -d "$app" ] || die "no such bundle: $app"
+
+  # --options runtime enables the hardened runtime, which notarization requires.
+  # --timestamp fetches a trusted timestamp, without which the signature expires
+  # with the certificate. No entitlements file: a Go binary that only opens
+  # sockets and reads its own config needs no exceptions, and every entitlement
+  # added is another thing Apple can reject.
+  #
+  # Not --deep, which Apple explicitly discourages: it signs nested code with the
+  # wrong identity settings and hides errors. This bundle has one executable.
+  codesign --force --options runtime --timestamp --sign "$IDENTITY" "$app"
+  printf 'signed %s\n' "$app"
+}
+
+cmd_verify() {
+  local app="${1:?usage: verify <app>}"
+  codesign --verify --strict --verbose=2 "$app"
+  codesign -dv --verbose=2 "$app" 2>&1 | grep -E 'Authority|TeamIdentifier|flags'
+  # Gatekeeper's own answer. Before notarization this reports rejected; after
+  # stapling it must say "accepted, source=Notarized Developer ID".
+  spctl -a -vv -t exec "$app" || true
+}
+
 case "${1:-}" in
   bundle) shift; cmd_bundle "$@" ;;
-  *) die "usage: macapp.sh bundle <binary> <version> [outdir]" ;;
+  sign) shift; cmd_sign "$@" ;;
+  verify) shift; cmd_verify "$@" ;;
+  *) die "usage: macapp.sh {bundle|sign|verify} ..." ;;
 esac
