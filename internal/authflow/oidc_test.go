@@ -91,6 +91,86 @@ func TestOIDCHappyPath(t *testing.T) {
 	}
 }
 
+// Baobar opens the system browser, which reuses whatever identity-provider
+// session is already active. On a machine signed in to more than one work
+// account that silently picks one, and a wrong pick surfaces far from the
+// cause — as a claim the role wanted and the token does not carry. Asking the
+// provider for the account chooser makes the choice explicit and visible.
+func TestOIDCAsksTheProviderForAnAccountChoice(t *testing.T) {
+	bao := fakeBao(t, func(redirect string) string {
+		return redirect + "?code=abc&state=xyz"
+	})
+	defer bao.Close()
+
+	var opened string
+	_, err := OIDC(context.Background(), OIDCConfig{
+		Addr: bao.URL, Mount: "oidc", CallbackPort: 0, Timeout: 5 * time.Second,
+		Prompt:  "select_account",
+		OpenURL: func(u string) error { opened = u; go http.Get(u); return nil },
+	})
+	if err != nil {
+		t.Fatalf("OIDC: %v", err)
+	}
+
+	u, perr := url.Parse(opened)
+	if perr != nil {
+		t.Fatalf("parse opened URL %q: %v", opened, perr)
+	}
+	if got := u.Query().Get("prompt"); got != "select_account" {
+		t.Errorf("prompt = %q, want select_account (opened %q)", got, opened)
+	}
+	// The rest of the provider's URL must survive being rewritten.
+	if got := u.Query().Get("code"); got != "abc" {
+		t.Errorf("code = %q, want abc — rewriting the URL dropped a parameter", got)
+	}
+}
+
+// An empty Prompt must leave the provider's URL exactly as OpenBao built it.
+func TestOIDCLeavesTheURLAloneWithoutAPrompt(t *testing.T) {
+	bao := fakeBao(t, func(redirect string) string {
+		return redirect + "?code=abc&state=xyz"
+	})
+	defer bao.Close()
+
+	var opened string
+	_, err := OIDC(context.Background(), OIDCConfig{
+		Addr: bao.URL, Mount: "oidc", CallbackPort: 0, Timeout: 5 * time.Second,
+		OpenURL: func(u string) error { opened = u; go http.Get(u); return nil },
+	})
+	if err != nil {
+		t.Fatalf("OIDC: %v", err)
+	}
+	if strings.Contains(opened, "prompt=") {
+		t.Errorf("opened %q, want no prompt parameter added", opened)
+	}
+}
+
+// A configured Prompt is the user's explicit choice and wins over whatever the
+// server put in the URL — otherwise setting it could silently do nothing.
+func TestOIDCPromptOverridesTheServersValue(t *testing.T) {
+	bao := fakeBao(t, func(redirect string) string {
+		return redirect + "?code=abc&state=xyz&prompt=none"
+	})
+	defer bao.Close()
+
+	var opened string
+	_, err := OIDC(context.Background(), OIDCConfig{
+		Addr: bao.URL, Mount: "oidc", CallbackPort: 0, Timeout: 5 * time.Second,
+		Prompt:  "select_account",
+		OpenURL: func(u string) error { opened = u; go http.Get(u); return nil },
+	})
+	if err != nil {
+		t.Fatalf("OIDC: %v", err)
+	}
+	u, perr := url.Parse(opened)
+	if perr != nil {
+		t.Fatalf("parse opened URL %q: %v", opened, perr)
+	}
+	if got := u.Query()["prompt"]; len(got) != 1 || got[0] != "select_account" {
+		t.Errorf("prompt = %v, want exactly [select_account]", got)
+	}
+}
+
 func TestOIDCProviderError(t *testing.T) {
 	bao := fakeBao(t, func(redirect string) string {
 		return redirect + "?error=access_denied&error_description=nope"

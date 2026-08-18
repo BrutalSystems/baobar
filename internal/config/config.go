@@ -29,6 +29,14 @@ const (
 	DefaultOIDCMount     = "oidc"
 	DefaultUserpassMount = "userpass"
 	DefaultCallbackPort  = 8250
+
+	// DefaultOIDCPrompt makes the identity provider ask which account to use.
+	// Login happens in the system browser, which reuses whatever provider
+	// session is already open — so on a machine signed in to more than one work
+	// account, one gets chosen silently, and a wrong choice fails later in the
+	// code exchange as a missing claim rather than here. The cost on a
+	// single-account machine is one click; set oidc_prompt = "" to opt out.
+	DefaultOIDCPrompt = "select_account"
 )
 
 var (
@@ -59,6 +67,9 @@ type Config struct {
 	UserpassMount string
 	CallbackPort  int
 	Username      string
+	// OIDCPrompt is sent to the identity provider as the OIDC `prompt`
+	// parameter. Empty sends none.
+	OIDCPrompt string
 }
 
 type fileConfig struct {
@@ -71,6 +82,10 @@ type fileConfig struct {
 	UserpassMount string `toml:"userpass_mount,omitempty"`
 	CallbackPort  string `toml:"callback_port,omitempty"`
 	Username      string `toml:"username,omitempty"`
+	// A pointer, unlike every other field here: oidc_prompt has a non-empty
+	// default, so an explicit "" is the only way to turn it off and must stay
+	// distinguishable from the key being absent.
+	OIDCPrompt *string `toml:"oidc_prompt,omitempty"`
 }
 
 // Load resolves settings with the file taking precedence over the environment.
@@ -125,6 +140,15 @@ func Load(path string, getenv func(string) string) (Config, error) {
 
 	c.OIDCRole = firstNonEmpty(fc.OIDCRole, getenv("BAOBAR_OIDC_ROLE"))
 	c.Username = firstNonEmpty(fc.Username, getenv("BAOBAR_USERNAME"))
+
+	// Not firstNonEmpty: that cannot tell "absent" from "deliberately empty",
+	// and empty is the only way to switch the account chooser back off.
+	c.OIDCPrompt = DefaultOIDCPrompt
+	if fc.OIDCPrompt != nil {
+		c.OIDCPrompt = *fc.OIDCPrompt
+	} else if s := getenv("BAOBAR_OIDC_PROMPT"); s != "" {
+		c.OIDCPrompt = s
+	}
 
 	c.CallbackPort = DefaultCallbackPort
 	if s := firstNonEmpty(fc.CallbackPort, getenv("BAOBAR_CALLBACK_PORT")); s != "" {
