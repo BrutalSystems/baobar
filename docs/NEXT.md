@@ -57,6 +57,14 @@ still true — but the claim was false and this file is meant to be the honest s
   its command line. The fix is unit-tested but has never opened a real browser.
 - **Autostart.** The registry implementation (`HKCU\…\Run`) has never executed. It cannot
   be tested from macOS; the tests cover the file-based platforms only.
+- **Start Menu shortcut.** After `choco install baobar`, confirm a "Baobar" entry exists in
+  the Start Menu and launches the tray app; after `choco uninstall baobar`, confirm it is
+  gone. The install script is syntax-checked on macOS with `pwsh`, but Chocolatey's cmdlets
+  do not exist there, so the behaviour is untested until this runs on Windows.
+- **Exe icon and publisher.** Confirm the exe shows the bun icon rather than the generic Go
+  binary icon in Explorer and the taskbar, and that Properties → Details names BrutalSystems
+  as the publisher. The resource is verified to be *in* the binary from macOS; that it is
+  *drawn* can only be checked here.
 
 Also confirm the tray icon and tooltip render at all: `SetTitle` is a no-op on Windows, so
 the icon plus tooltip is the entire signal there. If the icon does not appear, that is a
