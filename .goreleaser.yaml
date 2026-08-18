@@ -182,6 +182,32 @@ homebrew_casks:
     homepage: "https://github.com/BrutalSystems/baobar"
     description: "Menu bar indicator for OpenBao login state and token expiry"
     commit_msg_template: "baobar {{ .Tag }}"
+    # Tearing down the autostart entry on uninstall. Without this, removing
+    # Baobar leaves ~/Library/LaunchAgents/com.brutalsystems.baobar.plist behind,
+    # pointing at a binary that no longer exists — launchd then fails the spawn
+    # at every single login, silently, forever. The tray checkbox reports
+    # unchecked because Enabled() only stats the target, so nothing in the UI
+    # ever reveals it.
+    uninstall:
+      quit: [com.brutalsystems.baobar]
+      launchctl: [com.brutalsystems.baobar]
+      login_item: [Baobar]
+
+    # `brew uninstall --zap` additionally removes what Baobar itself wrote.
+    #
+    # Deliberately absent: ~/.vault-token. Baobar reads and writes it, but it
+    # belongs to the `bao` CLI and SOPS — the README is explicit that the shared
+    # file format is the only connection between them. Zapping Baobar must not
+    # log you out of your terminal.
+    zap:
+      quit: [com.brutalsystems.baobar]
+      launchctl: [com.brutalsystems.baobar]
+      login_item: [Baobar]
+      trash:
+        - ~/Library/LaunchAgents/com.brutalsystems.baobar.plist
+        - ~/Library/Application Support/baobar
+        - ~/Library/Caches/baobar
+
     caveats: |
       Just run Baobar — on first start it opens a browser tab asking for your
       OpenBao address, saves it, and carries on. There is no file to write.
