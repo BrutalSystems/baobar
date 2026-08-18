@@ -113,6 +113,7 @@ func renderDesktop(exe string) []byte {
 	return []byte(fmt.Sprintf(`[Desktop Entry]
 Type=Application
 Name=Baobar
+Icon=baobar
 Exec="%s"
 Terminal=false
 X-GNOME-Autostart-enabled=true

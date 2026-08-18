@@ -344,3 +344,10 @@ func TestNewReturnsSomethingUsable(t *testing.T) {
 		t.Errorf("Enabled: %v", err)
 	}
 }
+
+func TestRenderDesktopIncludesIconKey(t *testing.T) {
+	entry := string(renderDesktop("/usr/bin/baobar"))
+	if !strings.Contains(entry, "\nIcon=baobar\n") {
+		t.Errorf("autostart entry has no Icon= key:\n%s", entry)
+	}
+}
