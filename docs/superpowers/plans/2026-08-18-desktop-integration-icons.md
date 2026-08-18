@@ -83,7 +83,7 @@ blocked on the real artwork.
   - `var icoSizes = []uint{256, 128, 64, 48, 32, 16}`
   - `var hicolorSizes = []uint{512, 256, 128, 64, 48, 32, 16}`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Do this before touching `go.mod`. The three modules are already in the graph as
 indirect requires, so the imports below resolve immediately; `go mod tidy` in
@@ -250,13 +250,13 @@ func TestGenerateWritesHicolorTree(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `go test ./tools/genappicon/`
 Expected: FAIL — compile error, `undefined: checkMaster`, `undefined: generate`,
 `undefined: icoSizes`, `undefined: hicolorSizes`.
 
-- [ ] **Step 3: Write the derivation logic**
+- [x] **Step 3: Write the derivation logic**
 
 Create `tools/genappicon/icons.go`:
 
@@ -397,12 +397,12 @@ func generate(m image.Image, srcDir, outDir string) error {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `go test ./tools/genappicon/ -v`
 Expected: PASS, six tests.
 
-- [ ] **Step 5: Write the command entry point**
+- [x] **Step 5: Write the command entry point**
 
 Create `tools/genappicon/main.go`:
 
@@ -449,7 +449,7 @@ func main() {
 }
 ```
 
-- [ ] **Step 6: Verify the tree builds, vets clean, and go.mod is tidy**
+- [x] **Step 6: Verify the tree builds, vets clean, and go.mod is tidy**
 
 Run:
 ```bash
@@ -460,13 +460,18 @@ git diff go.mod
 Expected: no output from `gofmt -l`, all tests pass, and `git diff go.mod` shows
 the three modules losing their `// indirect` markers.
 
-- [ ] **Step 7: Regenerate the third-party licence file**
+- [~] **Step 7: Regenerate the third-party licence file** — NOT RUN, and not needed.
+  `go-licenses` is not installed locally. Verified instead that the outcome is a
+  no-op: `go.sum` is untouched by the promotion, so the module *set* is
+  unchanged, and all three modules were already listed in
+  `THIRD_PARTY_LICENSES.md`. The file records modules, not direct/indirect
+  markers. Re-run it on a machine with `go-licenses` if you want belt and braces.
 
 Run: `./tools/gen-third-party-licenses.sh`
 Expected: the three promoted dependencies may move between sections. If the file
 is unchanged, that is fine — they were already listed.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add go.mod go.sum tools/genappicon/ THIRD_PARTY_LICENSES.md
@@ -488,7 +493,7 @@ Independent of the artwork — ship it whether or not the master PNG has arrived
 - Produces: nothing consumed by later tasks. `renderDesktop(exe string) []byte`
   keeps its signature; only its output gains a line.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `internal/autostart/autostart_test.go` (check that `strings` is already
 imported at the top of the file; add it if not):
@@ -502,12 +507,12 @@ func TestRenderDesktopIncludesIconKey(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `go test ./internal/autostart/ -run TestRenderDesktopIncludesIconKey -v`
 Expected: FAIL — the printed entry has no `Icon=` line.
 
-- [ ] **Step 3: Add the key**
+- [x] **Step 3: Add the key**
 
 In `internal/autostart/render.go`, in `renderDesktop`, the returned template
 becomes:
@@ -534,13 +539,13 @@ login" off and on. That is acceptable — it is cosmetic, and rewriting entries
 behind the user's back on startup would be worse — but say so in the release
 notes rather than letting it look like the fix did not work.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `go test ./internal/autostart/ -race -v`
 Expected: PASS, including the pre-existing `desktopTarget` round-trip test —
 that parser reads only the `Exec=` line, so the new key cannot disturb it.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/autostart/render.go internal/autostart/autostart_test.go
@@ -566,14 +571,14 @@ tile respectively.
 - Produces: `assets/icon/baobar.ico` for Task 4;
   `assets/icon/hicolor/<n>x<n>/apps/baobar.png` for Task 6.
 
-- [ ] **Step 1: Confirm the master meets the contract**
+- [x] **Step 1: Confirm the master meets the contract**
 
 Run: `go run ./tools/genappicon`
 Expected: `wrote icons to assets/icon`. If it exits with "master must be square"
 or "master must be at least 1024x1024", the artwork is wrong — stop and go back
 to the designer rather than working around it.
 
-- [ ] **Step 2: Confirm every expected file landed**
+- [x] **Step 2: Confirm every expected file landed**
 
 Run:
 ```bash
@@ -582,7 +587,7 @@ find assets/icon -type f | sort
 Expected: `baobar.svg`, `baobar-1024.png`, `baobar.ico`, `baobar.icns`, and
 seven `hicolor/<n>x<n>/apps/baobar.png` files.
 
-- [ ] **Step 3: Look at the small sizes**
+- [x] **Step 3: Look at the small sizes**
 
 Open `assets/icon/hicolor/16x16/apps/baobar.png` and
 `assets/icon/hicolor/32x32/apps/baobar.png` at 100%. This is a human judgement
@@ -590,7 +595,7 @@ and cannot be automated: if the pleat lines have blurred into the bun, the fix
 is a hand-exported override from Illustrator at those two sizes, per the spec's
 "Small sizes" section. Note what you see either way.
 
-- [ ] **Step 4: Add a guard test for the committed artwork**
+- [x] **Step 4: Add a guard test for the committed artwork**
 
 Nothing in the Go build references `assets/` — the `.ico` is consumed only by the
 release pipeline. So a truncated, stale, or wrongly-regenerated icon would be
@@ -634,7 +639,7 @@ func TestCommittedICOHasEverySize(t *testing.T) {
 Run: `go test ./tools/genappicon/ -run TestCommittedICO -v`
 Expected: PASS (not SKIP — the asset exists by now).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add assets/icon tools/genappicon/assets_test.go
@@ -656,7 +661,7 @@ git commit -m "feat(icons): add the Baobar app icon and its derived assets"
   `cmd/baobar/resource_windows_arm64.syso` at build time. Nothing imports them;
   the Go linker picks them up by filename.
 
-- [ ] **Step 1: Confirm the tool's config schema before writing it**
+- [x] **Step 1: Confirm the tool's config schema before writing it**
 
 Run:
 ```bash
@@ -666,7 +671,7 @@ Expected: a JSON document printed to stdout. Compare its shape to the file in th
 next step and prefer the tool's own output if the two disagree — this step exists
 because the schema is being reproduced from documentation, not from the tool.
 
-- [ ] **Step 2: Write the version info config**
+- [x] **Step 2: Write the version info config**
 
 Create `packaging/windows/versioninfo.json`:
 
@@ -698,7 +703,7 @@ Create `packaging/windows/versioninfo.json`:
 The version numbers are zeros on purpose: the real values are passed on the
 command line from the build, so the committed file never goes stale.
 
-- [ ] **Step 3: Run the generator by hand and find out where it writes**
+- [x] **Step 3: Run the generator by hand and find out where it writes**
 
 Run:
 ```bash
@@ -715,7 +720,7 @@ directory, which is why the command runs from `cmd/baobar` — Go only links
 `.syso` files that sit in the `main` package's own directory. If the files land
 somewhere else, adjust the working directory until they land here.
 
-- [ ] **Step 4: Verify the resource is actually linked into the exe**
+- [x] **Step 4: Verify the resource is actually linked into the exe**
 
 Run:
 ```bash
@@ -737,7 +742,7 @@ A count of 0 means the `.syso` was not linked, usually because it is in the wron
 directory. Cross-check by comparing binary sizes with and without it: the
 resource adds roughly 156 KB.
 
-- [ ] **Step 5: Verify the other two platforms are unaffected**
+- [x] **Step 5: Verify the other two platforms are unaffected**
 
 Run:
 ```bash
@@ -748,7 +753,7 @@ Expected: both succeed with the `.syso` files still present in `cmd/baobar/`.
 This is the regression the filename suffixes exist to prevent; prove it rather
 than assume it.
 
-- [ ] **Step 6: Keep the generated resources out of the tree**
+- [x] **Step 6: Keep the generated resources out of the tree**
 
 Append to the existing `.gitignore`:
 
@@ -758,7 +763,7 @@ Append to the existing `.gitignore`:
 cmd/baobar/*.syso
 ```
 
-- [ ] **Step 7: Wire it into the release build**
+- [x] **Step 7: Wire it into the release build**
 
 In `.goreleaser.yaml`, replace the `before` block with:
 
@@ -789,7 +794,7 @@ before:
       ../../packaging/windows/versioninfo.json"
 ```
 
-- [ ] **Step 8: Validate the config and run a snapshot build**
+- [x] **Step 8: Validate the config and run a snapshot build**
 
 Run:
 ```bash
@@ -805,7 +810,7 @@ grep -a -c BrutalSystems /tmp/dist.stripped
 ```
 Expected: `1`. Same `LC_ALL=C` caveat as Step 4.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add packaging/windows/versioninfo.json .goreleaser.yaml .gitignore
@@ -824,7 +829,7 @@ git commit -m "feat(windows): embed the app icon and version info in the exe"
 - Consumes: nothing from earlier tasks.
 - Produces: nothing consumed by later tasks.
 
-- [ ] **Step 1: Add the shortcut to the install script**
+- [x] **Step 1: Add the shortcut to the install script**
 
 Append to `packaging/chocolatey/tools/chocolateyinstall.ps1`:
 
@@ -851,7 +856,7 @@ try {
 }
 ```
 
-- [ ] **Step 2: Remove it on uninstall**
+- [x] **Step 2: Remove it on uninstall**
 
 Append to `packaging/chocolatey/tools/chocolateyuninstall.ps1`:
 
@@ -864,7 +869,7 @@ This follows the existing script's rule: remove what the package created
 (`baobar.exe.gui` already sets that precedent), leave the user's config and
 token alone.
 
-- [ ] **Step 3: Parse-check both scripts**
+- [x] **Step 3: Parse-check both scripts**
 
 Run:
 ```bash
@@ -879,7 +884,7 @@ Expected: `OK` for both. This is a syntax check only — the Chocolatey cmdlets 
 not exist on macOS, so behaviour cannot be tested here. That is a real gap, not
 an oversight: record it for the Windows verification pass.
 
-- [ ] **Step 4: Record the manual verification**
+- [x] **Step 4: Record the manual verification**
 
 Add to the Windows section of `docs/NEXT.md`, alongside the existing Windows
 checks:
@@ -893,7 +898,7 @@ checks:
   BrutalSystems as the publisher.
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packaging/chocolatey/tools/ docs/NEXT.md
@@ -913,7 +918,7 @@ git commit -m "feat(windows): add a Start Menu shortcut to the Chocolatey packag
 - Consumes: `assets/icon/hicolor/<n>x<n>/apps/baobar.png` from Task 3.
 - Produces: `.deb` and `.rpm` artifacts.
 
-- [ ] **Step 1: Write the applications-menu desktop entry**
+- [x] **Step 1: Write the applications-menu desktop entry**
 
 Create `packaging/linux/baobar.desktop`:
 
@@ -938,7 +943,7 @@ whatever executable is actually running, and is toggled by the tray checkbox.
 Both now carry `Icon=baobar`. `StartupNotify=false` because Baobar opens no
 window, so the launch spinner would never be dismissed.
 
-- [ ] **Step 2: Add the nfpms section to `.goreleaser.yaml`**
+- [x] **Step 2: Add the nfpms section to `.goreleaser.yaml`**
 
 Insert after the `archives:` block:
 
@@ -981,7 +986,7 @@ The seven icon entries are written out rather than globbed: nFPM's glob handling
 depends on `dst` being interpreted as a directory, and being explicit here costs
 six lines and removes the question entirely.
 
-- [ ] **Step 3: Build a snapshot and verify the package contents**
+- [x] **Step 3: Build a snapshot and verify the package contents**
 
 Run:
 ```bash
@@ -1004,7 +1009,7 @@ Expected in the listing: `./usr/bin/baobar`,
 `./usr/share/applications/baobar.desktop`, and all seven
 `./usr/share/icons/hicolor/<n>x<n>/apps/baobar.png` paths.
 
-- [ ] **Step 4: Update the Linux install instructions**
+- [x] **Step 4: Update the Linux install instructions**
 
 > **Deviation from the spec, recorded deliberately.** The spec originally called
 > for shipping the `.desktop` file and icons inside the Linux tarball as well.
@@ -1035,7 +1040,7 @@ applications-menu entry and no icon — nothing in the archive can install to
 Keep the existing GNOME AppIndicator warning exactly where it is; it applies to
 every install method and is the difference between "invisible" and "broken".
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packaging/linux/baobar.desktop .goreleaser.yaml README.md
