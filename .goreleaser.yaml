@@ -167,60 +167,6 @@ release:
   draft: false
   prerelease: auto
 
-# A cask rather than a formula: Baobar is a GUI menu bar app, not a CLI.
-homebrew_casks:
-  - name: baobar
-    ids: [default]
-    # Same inert-until-configured property as notarization: with no tap token
-    # the cask is still generated into dist/ but not pushed, so a release
-    # succeeds before the tap repository exists.
-    skip_upload: '{{ not (isEnvSet "HOMEBREW_TAP_TOKEN") }}'
-    repository:
-      owner: BrutalSystems
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    homepage: "https://github.com/BrutalSystems/baobar"
-    description: "Menu bar indicator for OpenBao login state and token expiry"
-    commit_msg_template: "baobar {{ .Tag }}"
-    # Tearing down the autostart entry on uninstall. Without this, removing
-    # Baobar leaves ~/Library/LaunchAgents/com.brutalsystems.baobar.plist behind,
-    # pointing at a binary that no longer exists — launchd then fails the spawn
-    # at every single login, silently, forever. The tray checkbox reports
-    # unchecked because Enabled() only stats the target, so nothing in the UI
-    # ever reveals it.
-    uninstall:
-      quit: [com.brutalsystems.baobar]
-      launchctl: [com.brutalsystems.baobar]
-      login_item: [Baobar]
-
-    # `brew uninstall --zap` additionally removes what Baobar itself wrote.
-    #
-    # Deliberately absent: ~/.vault-token. Baobar reads and writes it, but it
-    # belongs to the `bao` CLI and SOPS — the README is explicit that the shared
-    # file format is the only connection between them. Zapping Baobar must not
-    # log you out of your terminal.
-    zap:
-      quit: [com.brutalsystems.baobar]
-      launchctl: [com.brutalsystems.baobar]
-      login_item: [Baobar]
-      trash:
-        - ~/Library/LaunchAgents/com.brutalsystems.baobar.plist
-        - ~/Library/Application Support/baobar
-        - ~/Library/Caches/baobar
-
-    caveats: |
-      Just run Baobar — on first start it opens a browser tab asking for your
-      OpenBao address, saves it, and carries on. There is no file to write.
-
-      Expect that prompt even if VAULT_ADDR is set in your shell: "Start at
-      login" runs Baobar from launchd, which does not inherit your shell
-      environment. Answering once stores the address where launchd can see it.
-
-      To change it later, or to prefill the login form with your username:
-        ~/Library/Application Support/baobar/config.toml
-        addr = "https://openbao.example.com"
-        username = "you"
-
 # winget manifests. Unlike Chocolatey this pipe is pure Go and needs no
 # external CLI, so it runs in the macOS release job alongside everything else.
 #

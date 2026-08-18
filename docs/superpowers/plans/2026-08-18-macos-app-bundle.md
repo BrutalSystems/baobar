@@ -481,15 +481,33 @@ Expected: passes.
 
 - [ ] **Step 3: Test the cask against the local zip**
 
-Point the cask at the file on disk and install it for real:
+Homebrew **refuses casks that are not in a tap** ("Homebrew requires casks to be
+in a tap, rejecting: ..."), so a bare file path does not work. Use a scratch tap.
+
+Test with an *isolated* copy, not the real cask: installing a second cask named
+`baobar` collides with the installed one, and running the real uninstall would
+execute `launchctl: com.brutalsystems.baobar` and tear down your own working
+LaunchAgent. A distinct token, binary target and launchctl label exercise the
+same code paths harmlessly.
+
 ```bash
 SHA=$(shasum -a 256 dist/Baobar-0.1.6-macOS.zip | cut -d' ' -f1)
-sed -e "s|REPLACE_ON_RELEASE|$SHA|" \
+sed -e 's|^cask "baobar" do|cask "baobar-casktest" do|' \
+    -e "s|REPLACE_ON_RELEASE|$SHA|" \
     -e "s|url \".*\"|url \"file://$PWD/dist/Baobar-0.1.6-macOS.zip\"|" \
-    packaging/homebrew/baobar.rb > /tmp/baobar-local.rb
-brew install --cask /tmp/baobar-local.rb
+    -e 's|target: "baobar"|target: "baobar-casktest"|' \
+    -e 's|com.brutalsystems.baobar"|com.brutalsystems.baobar-casktest"|g' \
+    packaging/homebrew/baobar.rb > /tmp/baobar-casktest.rb
+
+brew tap-new baobar/casktest --no-git
+cp /tmp/baobar-casktest.rb "$(brew --repository baobar/casktest)/Casks/"
+brew install --cask baobar/casktest/baobar-casktest
 ```
-Expected: installs without error.
+Expected: `Moving App 'Baobar.app' to '/Applications/Baobar.app'` and
+`Linking Binary ... to '/opt/homebrew/bin/baobar-casktest'`.
+
+Clean up afterwards with `brew uninstall --cask baobar-casktest` and
+`brew untap baobar/casktest`.
 
 Then verify both halves of the install:
 ```bash
