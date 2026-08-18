@@ -91,6 +91,43 @@ archives:
       # only living in the repository.
       - THIRD_PARTY_LICENSES.md
 
+# .deb/.rpm exist so that the desktop entry and the icon theme files land at
+# their standard paths — a tarball cannot place them, which is why an extracted
+# Baobar has no applications-menu entry and no icon. nFPM is part of GoReleaser
+# OSS; it only ever packages the linux artifacts.
+#
+# This is the applications-menu entry. It is not the autostart entry, which the
+# app writes at runtime into ~/.config/autostart/baobar.desktop pointing at
+# whatever executable is actually running. Both carry Icon=baobar.
+nfpms:
+  - id: default
+    ids: [crossbuilt]
+    package_name: baobar
+    vendor: BrutalSystems
+    homepage: "https://github.com/BrutalSystems/baobar"
+    maintainer: "BrutalSystems <noreply@brutalsystems.com>"
+    description: "Menu bar / system tray indicator for OpenBao login state and token expiry"
+    license: MIT
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    contents:
+      - src: packaging/linux/baobar.desktop
+        dst: /usr/share/applications/baobar.desktop
+      - src: assets/icon/hicolor/512x512/apps/baobar.png
+        dst: /usr/share/icons/hicolor/512x512/apps/baobar.png
+      - src: assets/icon/hicolor/256x256/apps/baobar.png
+        dst: /usr/share/icons/hicolor/256x256/apps/baobar.png
+      - src: assets/icon/hicolor/128x128/apps/baobar.png
+        dst: /usr/share/icons/hicolor/128x128/apps/baobar.png
+      - src: assets/icon/hicolor/64x64/apps/baobar.png
+        dst: /usr/share/icons/hicolor/64x64/apps/baobar.png
+      - src: assets/icon/hicolor/48x48/apps/baobar.png
+        dst: /usr/share/icons/hicolor/48x48/apps/baobar.png
+      - src: assets/icon/hicolor/32x32/apps/baobar.png
+        dst: /usr/share/icons/hicolor/32x32/apps/baobar.png
+      - src: assets/icon/hicolor/16x16/apps/baobar.png
+        dst: /usr/share/icons/hicolor/16x16/apps/baobar.png
+
 checksum:
   name_template: "checksums.txt"
 

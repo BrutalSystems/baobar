@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Baobar
+GenericName=OpenBao login indicator
+Comment=Shows whether you are signed in to OpenBao and how long your token has left
+Exec=/usr/bin/baobar
+Icon=baobar
+Terminal=false
+Categories=Utility;Security;
+Keywords=openbao;vault;token;login;sso;
+StartupNotify=false

@@ -199,10 +199,20 @@ Windows-on-ARM hardware.
 
 ### Linux
 
-Download `baobar_<version>_linux_amd64.tar.gz` from
-[the latest release](https://github.com/BrutalSystems/baobar/releases/latest), extract it,
-and put the binary somewhere permanent — **not** `/tmp`, which "Start at login" refuses by
-design because the OS empties it.
+On Debian and Ubuntu, prefer the package. It is the only install that places the desktop
+entry and the icon, so Baobar appears in the applications grid rather than being launchable
+only by path:
+
+```sh
+sudo dpkg -i baobar_<version>_linux_amd64.deb
+```
+
+An `.rpm` is published for Fedora and openSUSE.
+
+The tarball still works and is the right choice on other distributions. Extract it and put
+the binary somewhere permanent — **not** `/tmp`, which "Start at login" refuses by design
+because the OS empties it. Note that an extracted binary has no applications-menu entry and
+no icon: nothing in an archive can install into `/usr/share`.
 
 ```sh
 tar xzf baobar_*_linux_amd64.tar.gz
