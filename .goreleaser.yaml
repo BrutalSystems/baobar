@@ -5,6 +5,27 @@ project_name: baobar
 before:
   hooks:
     - go mod tidy
+    # Embeds the app icon and a VERSIONINFO block into the Windows exe. Without
+    # this the binary has a blank generic icon in Explorer, the taskbar and the
+    # SmartScreen dialog, and no publisher string anywhere — on a platform where
+    # the icon is the entire state signal and the binary is unsigned, that is
+    # the worst first impression of the three platforms.
+    #
+    # `go run <pkg>@version` deliberately keeps goversioninfo out of go.mod: it
+    # is a build tool, not a library. `-platform-specific` writes one .syso per
+    # architecture with the filename suffixes Go uses to constrain them to
+    # Windows, and it ignores -o, so this has to run from the main package's own
+    # directory — the only place Go will link them from.
+    #
+    # The `sh -c` wrapper is not decoration: before.hooks in GoReleaser OSS is a
+    # list of strings, and the dir:/cmd: object form fails to parse with
+    # "cannot unmarshal !!map into string".
+    - >-
+      sh -c "cd cmd/baobar && go run
+      github.com/josephspurrier/goversioninfo/cmd/goversioninfo@v1.7.0
+      -platform-specific -icon ../../assets/icon/baobar.ico
+      -ver-major {{ .Major }} -ver-minor {{ .Minor }} -ver-patch {{ .Patch }}
+      ../../packaging/windows/versioninfo.json"
 
 builds:
   # macOS is built natively with cgo, and the whole release therefore runs on a
