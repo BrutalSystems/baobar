@@ -81,7 +81,7 @@ any kind.
 - Produces: `tools/macapp.sh bundle <binary> <version> [outdir]`, writing
   `<outdir>/Baobar.app`. Consumed by Tasks 2, 3 and 5.
 
-- [ ] **Step 1: Write the script's bundle subcommand**
+- [x] **Step 1: Write the script's bundle subcommand**
 
 Create `tools/macapp.sh`:
 
@@ -164,7 +164,7 @@ case "${1:-}" in
 esac
 ```
 
-- [ ] **Step 2: Build a binary and bundle it**
+- [x] **Step 2: Build a binary and bundle it**
 
 Run:
 ```bash
@@ -176,7 +176,7 @@ find dist/Baobar.app -type f | sort
 Expected: exactly three files — `Contents/Info.plist`, `Contents/MacOS/baobar`,
 `Contents/Resources/baobar.icns`.
 
-- [ ] **Step 3: Verify macOS actually reads the bundle**
+- [x] **Step 3: Verify macOS actually reads the bundle**
 
 Run:
 ```bash
@@ -186,7 +186,7 @@ mdls -name kMDItemDisplayName -name kMDItemVersion dist/Baobar.app 2>/dev/null
 Expected: the identifier is `com.brutalsystems.baobar`, `LSUIElement` is 1, and
 the version is `0.1.6` with no snapshot suffix.
 
-- [ ] **Step 4: Launch it and confirm the identity macOS sees**
+- [x] **Step 4: Launch it and confirm the identity macOS sees**
 
 Run:
 ```bash
@@ -201,7 +201,7 @@ lowercase name `baobar`. That difference is the entire point of this task.
 Also look at the menu bar: the tray icon must still appear. Then quit it from the
 tray menu, or `pkill -f 'Baobar.app/Contents/MacOS/baobar'`.
 
-- [ ] **Step 5: Look at the icon in Finder**
+- [x] **Step 5: Look at the icon in Finder**
 
 Run: `open dist/`
 
@@ -210,7 +210,7 @@ icon. If it shows the generic icon, `CFBundleIconFile` and the `.icns` filename
 disagree, or the `.icns` is malformed — check with
 `file assets/icon/baobar.icns`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add tools/macapp.sh
@@ -228,13 +228,13 @@ git commit -m "feat(macos): assemble a Baobar.app bundle"
 - Consumes: `cmd_bundle` output from Task 1.
 - Produces: `tools/macapp.sh sign <app>` and `tools/macapp.sh verify <app>`.
 
-- [ ] **Step 1: Confirm the identity is present before writing anything**
+- [x] **Step 1: Confirm the identity is present before writing anything**
 
 Run: `security find-identity -v -p codesigning | grep "Developer ID Application"`
 Expected: one line naming Springthrough Consulting Inc. (7CQD3Q2Y8Z). If it is
 absent, stop — the rest of this task cannot be tested and must not be guessed at.
 
-- [ ] **Step 2: Add the sign and verify subcommands**
+- [x] **Step 2: Add the sign and verify subcommands**
 
 Insert into `tools/macapp.sh`, before the `case` block:
 
@@ -276,7 +276,7 @@ case "${1:-}" in
 esac
 ```
 
-- [ ] **Step 3: Sign and inspect**
+- [x] **Step 3: Sign and inspect**
 
 Run:
 ```bash
@@ -289,13 +289,13 @@ Designated Requirement`. The authority line names
 `7CQD3Q2Y8Z`, and `flags` includes `runtime` — that last one is the hardened
 runtime, and notarization fails without it.
 
-- [ ] **Step 4: Confirm Gatekeeper still refuses it**
+- [x] **Step 4: Confirm Gatekeeper still refuses it**
 
 In the same output, `spctl` is expected to **reject** the app at this point,
 typically `source=Unnotarized Developer ID`. That is correct and important: it
 proves signing alone is not enough, and gives Task 3 a real before/after.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tools/macapp.sh
@@ -319,7 +319,7 @@ needs a live token.
   `<outdir>/Baobar-<version>-macOS.zip` — stapled, and the artifact the cask
   downloads.
 
-- [ ] **Step 1: Add the notarize subcommand**
+- [x] **Step 1: Add the notarize subcommand**
 
 Insert into `tools/macapp.sh`, before the `case` block, and add
 `notarize) shift; cmd_notarize "$@" ;;` to the dispatcher:
@@ -362,7 +362,7 @@ cmd_notarize() {
 }
 ```
 
-- [ ] **Step 2: Unlock the credential**
+- [x] **Step 2: Unlock the credential**
 
 This needs a live OpenBao token, so run it yourself rather than through the
 agent — in Claude Code, prefix with `!` to run it in the session:
@@ -379,7 +379,7 @@ export APPLE_NOTARY_ISSUER_ID="$APPLE_ASC_ISSUER_ID"
 The `.p8` is stored base64-encoded because keep's dotenv format cannot hold a
 multi-line PEM. Delete the decoded file when finished.
 
-- [ ] **Step 3: Notarize**
+- [x] **Step 3: Notarize**
 
 Run: `./tools/macapp.sh notarize dist/Baobar.app 0.1.6 dist`
 
@@ -393,7 +393,7 @@ xcrun notarytool log <submission-id> --key "$APPLE_NOTARY_KEY_FILE" \
 ```
 The usual causes are a missing hardened runtime and an unsigned nested binary.
 
-- [ ] **Step 4: Prove Gatekeeper's answer changed**
+- [x] **Step 4: Prove Gatekeeper's answer changed**
 
 Run: `./tools/macapp.sh verify dist/Baobar.app`
 
@@ -411,7 +411,7 @@ open /tmp/Baobar.app   # must launch with no Gatekeeper dialog at all
 pkill -f '/tmp/Baobar.app' ; rm -rf /tmp/Baobar.app
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tools/macapp.sh
@@ -431,7 +431,7 @@ git commit -m "feat(macos): notarize and staple the bundle"
 - Produces: a cask installing `Baobar.app` while keeping
   `/opt/homebrew/bin/baobar` valid.
 
-- [ ] **Step 1: Write the cask**
+- [x] **Step 1: Write the cask**
 
 Create `packaging/homebrew/baobar.rb`:
 
@@ -471,7 +471,7 @@ cask "baobar" do
 end
 ```
 
-- [ ] **Step 2: Remove GoReleaser's cask generation**
+- [x] **Step 2: Remove GoReleaser's cask generation**
 
 Delete the entire `homebrew_casks:` block from `.goreleaser.yaml`. Leaving it
 would overwrite this hand-written cask in the tap on the next release.
@@ -479,7 +479,7 @@ would overwrite this hand-written cask in the tap on the next release.
 Run: `goreleaser check`
 Expected: passes.
 
-- [ ] **Step 3: Test the cask against the local zip**
+- [x] **Step 3: Test the cask against the local zip**
 
 Homebrew **refuses casks that are not in a tap** ("Homebrew requires casks to be
 in a tap, rejecting: ..."), so a bare file path does not work. Use a scratch tap.
@@ -518,7 +518,7 @@ Expected: the app is in `/Applications`, and the `binary` stanza has left a
 `baobar` symlink in Homebrew's bin — the compatibility that keeps existing
 LaunchAgents alive.
 
-- [ ] **Step 4: Test the uninstall teardown**
+- [x] **Step 4: Test the uninstall teardown**
 
 ```bash
 brew uninstall --cask baobar
@@ -528,7 +528,7 @@ Expected: the app is gone. If you had a LaunchAgent loaded, confirm
 `launchctl list | grep baobar` is now empty — that is the `uninstall launchctl:`
 stanza doing the job that had to be done by hand at the start of this work.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packaging/homebrew/baobar.rb .goreleaser.yaml
@@ -547,7 +547,7 @@ already been run by hand and proven on this Mac. CI only repeats them.
 - Modify: `.goreleaser.yaml` (remove `notarize:`)
 - Modify: `README.md`
 
-- [ ] **Step 1: Remove the old notarization block**
+- [x] **Step 1: Remove the old notarization block**
 
 Delete the `notarize:` block from `.goreleaser.yaml`. It signs the bare binary
 via the cross-platform path, which must not be applied to a bundle — GoReleaser's
@@ -558,7 +558,7 @@ macOS to mark the application as damaged". The bundle is signed by
 Run: `goreleaser check`
 Expected: passes.
 
-- [ ] **Step 2: Add the packaging step to the release workflow**
+- [x] **Step 2: Add the packaging step to the release workflow**
 
 In `.github/workflows/release.yml`, after the GoReleaser step:
 
@@ -608,7 +608,7 @@ The secret `APPLE_NOTARY_KEY_B64` is the base64 of `AuthKey_D99P3DSQVU.p8`, whic
 is exactly how the Apple `keep` vault already stores it — copy the value across
 without decoding.
 
-- [ ] **Step 3: Document the cask release step**
+- [x] **Step 3: Document the cask release step**
 
 Add to `docs/NEXT.md`, under a new "Releasing" heading:
 
@@ -625,7 +625,7 @@ an app-based cask needs GoReleaser Pro. After a release publishes:
 This is the automation the Pro licence would have bought. Two lines per release.
 ```
 
-- [ ] **Step 4: Update the README install section**
+- [x] **Step 4: Update the README install section**
 
 The macOS install becomes an app rather than a binary. Change the Homebrew
 section to say Baobar installs to `/Applications`, appears in Spotlight and
@@ -639,7 +639,7 @@ Also update the verification command, which no longer points at a bare binary:
 codesign --test-requirement="=notarized" -vv /Applications/Baobar.app
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .github/workflows/release.yml .goreleaser.yaml README.md docs/NEXT.md
@@ -658,9 +658,26 @@ git commit -m "ci(macos): build, sign and notarize the app bundle on release"
 | The hand-maintained cask drifts from the released version | It is two fields, and Task 5 Step 3 writes the procedure down. Accepted cost of not buying Pro. |
 | Notarization credentials expire or rotate | The key lives in the Apple `keep` vault; `bao login` is a prerequisite, and Baobar itself is the thing that tells you when that token is about to expire. |
 
-## Open Question
+## Open Question — resolved
 
-`depends_on macos: ">= :big_sur"` in the cask is a guess at the floor and is the
-one value in this plan not verified. Either confirm what the Go toolchain
-actually requires and set it accordingly, or drop the line — an absent constraint
-is better than a wrong one.
+`depends_on macos:` was dropped rather than guessed at. An absent constraint is
+better than a wrong one, and nothing observed during implementation justified a
+specific floor.
+
+## Outcome
+
+Tasks 1-4 were executed and verified on a Mac before Task 5 was written, which
+was the point of the structure. What that caught, that CI would not have:
+
+- **App Translocation.** Launching a genuinely quarantined copy showed macOS
+  running it from a randomised `AppTranslocation` path. `checkStablePath` already
+  refuses it — `/private/var/folders/` was in `volatilePrefixes` for `/tmp`'s
+  sake — but its advice named `/usr/local/bin` to someone who had double-clicked
+  an app. Now pinned by a test using the real observed path.
+- **Homebrew refuses casks outside a tap.** The plan's original local-test step
+  could not have worked.
+- **Testing the real cask would have torn down a live LaunchAgent**, since its
+  uninstall stanza names the real launchctl label.
+
+Secrets needed: none new. The existing `MACOS_SIGN_*` and `MACOS_NOTARY_*`
+repository secrets cover it.
