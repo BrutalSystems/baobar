@@ -2,6 +2,7 @@ package authflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -114,8 +115,51 @@ func TestConfigProblemDetailIsBounded(t *testing.T) {
 	}
 }
 
-// The credential-bearing exchange must NOT become a ConfigProblem: its response
-// body is not something to render, and its failures are not user-fixable config.
+// The OIDC role's user_claim names a claim the identity provider does not
+// emit — the single most common way a working-on-paper SSO setup fails. OpenBao
+// says exactly which claim is missing; flattening that to a status code left the
+// user with "Login did not complete" and nothing to act on.
+func TestOIDCSurfacesAMissingClaimFromTheCallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/oidc/auth_url") {
+			var body struct {
+				RedirectURI string `json:"redirect_uri"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"auth_url": body.RedirectURI + "?code=abc&state=xyz"},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"errors":["OpenBao login failed. claim \"email\" not found in token"]}`))
+	}))
+	defer srv.Close()
+
+	_, err := OIDC(context.Background(), OIDCConfig{
+		Addr: srv.URL, Mount: "oidc", CallbackPort: 0, Timeout: 5 * time.Second,
+		OpenURL: func(u string) error { go http.Get(u); return nil },
+	})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+
+	var p *ConfigProblem
+	if !errors.As(err, &p) {
+		t.Fatalf("err = %v (%T), want a *ConfigProblem so the tray can show the reason", err, err)
+	}
+	if !strings.Contains(p.Detail, `claim "email" not found`) {
+		t.Errorf("Detail = %q, want it to name the missing claim", p.Detail)
+	}
+	if p.Status != http.StatusBadRequest {
+		t.Errorf("Status = %d, want 400", p.Status)
+	}
+}
+
+// Userpass carries a username and password in the request body, and its
+// failures are credentials-wrong rather than configuration-wrong. It stays
+// generic: unlike the OIDC callback above, there is no server-authored config
+// error worth surfacing, and its body is not something to render.
 func TestExchangeFailureIsNotAConfigProblem(t *testing.T) {
 	cfg := UserpassConfig{Addr: "https://bao.example.com", Mount: "userpass"}
 	_, _, err := cfg.login(context.Background(), "userpass-dev", "pw")
