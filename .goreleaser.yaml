@@ -141,25 +141,6 @@ changelog:
       - "^chore:"
       - "^ci:"
 
-# Signing and notarization. Apple requires both for a cask that is not going to
-# greet the user with "app is damaged and cannot be opened" — an unsigned tray
-# app is a bad first impression. The whole block is inert until the secrets
-# exist, so releases work today and start being signed the moment they are set,
-# with no config change.
-notarize:
-  macos:
-    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
-      ids: [darwin]
-      sign:
-        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
-        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
-      notarize:
-        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
-        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
-        key: "{{ .Env.MACOS_NOTARY_KEY }}"
-        wait: true
-        timeout: 30m
-
 release:
   github:
     owner: BrutalSystems

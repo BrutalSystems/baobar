@@ -199,3 +199,30 @@ docs/local/          git-ignored: real server address, the internal prototype's 
 
 `docs/local/verification.md` holds the environment-specific values the public docs
 deliberately omit. Start there if a command in the docs needs a real hostname.
+
+## Releasing
+
+### macOS: the Homebrew cask is hand-maintained
+
+GoReleaser no longer generates the cask. An app-based cask needs the `app:` stanza, which
+is GoReleaser Pro only and additionally forces DMG output, which is also Pro. The cask
+therefore lives at `packaging/homebrew/baobar.rb` and is copied to the tap by hand.
+
+After a release publishes:
+
+1. Take the SHA-256 that `tools/macapp.sh notarize` printed — it is in the release job log,
+   on the line after "notarized and stapled".
+2. Update `version` and `sha256` in `packaging/homebrew/baobar.rb`.
+3. Copy it to `BrutalSystems/homebrew-tap` as `Casks/baobar.rb` and push.
+
+Two fields per release. This is the automation a Pro licence would have bought, and it is
+worth revisiting that trade if Windows `.msi` installers ever land on the roadmap, since
+those are Pro-only too.
+
+### Testing the cask locally
+
+Homebrew refuses casks that are not in a tap, so a bare file path will not install. Use a
+scratch tap, and test with an *isolated* copy rather than the real cask — installing a
+second cask named `baobar` collides with the installed one, and the real uninstall runs
+`launchctl: com.brutalsystems.baobar`, which would tear down your own working LaunchAgent.
+The procedure is in `docs/superpowers/plans/2026-08-18-macos-app-bundle.md`, Task 4.

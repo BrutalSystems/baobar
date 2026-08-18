@@ -53,26 +53,61 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          # A PAT with contents:write on the tap repository. GITHUB_TOKEN
-          # cannot push to another repo. Absent, the cask is built but not
-          # published and the release still succeeds.
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-
-          # Apple signing and notarization. Every one of these is optional:
-          # .goreleaser.yaml gates the whole block on MACOS_SIGN_P12 being set
-          # AND non-empty, which is exactly what an undefined secret produces
-          # here. Until they exist, releases are unsigned and macOS will warn
-          # users that the app is damaged.
-          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
-          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
-          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
-          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
-
           # A PAT that can push to a BrutalSystems fork of microsoft/winget-pkgs
           # and open a PR upstream. Absent, manifests are generated but not
           # submitted and the release still succeeds.
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+
+      # macOS packaging happens here rather than inside GoReleaser because every
+      # GoReleaser feature that would do it — app_bundles, dmg, the cask `app:`
+      # stanza, native notarization — is Pro-only, and this project is on the
+      # open-source edition.
+      #
+      # The payoff is that tools/macapp.sh is the same script a developer runs by
+      # hand on a laptop. Every command below was executed and verified locally
+      # before this step was written; CI is not where any of it is discovered.
+      - name: Package, sign and notarize Baobar.app
+        env:
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+
+          # The keychain is thrown away with the runner, so its password is
+          # generated here rather than being a secret someone has to rotate.
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo -n "$MACOS_SIGN_P12" | base64 --decode -o "$RUNNER_TEMP/sign.p12"
+          security import "$RUNNER_TEMP/sign.p12" -P "$MACOS_SIGN_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          # Without this, codesign blocks on a GUI prompt that never arrives and
+          # the job hangs until it times out.
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN"
+
+          echo -n "$MACOS_NOTARY_KEY" | base64 --decode -o "$RUNNER_TEMP/AuthKey.p8"
+          export APPLE_NOTARY_KEY_FILE="$RUNNER_TEMP/AuthKey.p8"
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          BINARY="$(find dist -type f -name baobar -path '*darwin_all*' | head -1)"
+          test -n "$BINARY" || { echo "no universal darwin binary in dist/" >&2; exit 1; }
+
+          ./tools/macapp.sh bundle "$BINARY" "$VERSION" dist
+          ./tools/macapp.sh sign dist/Baobar.app
+          ./tools/macapp.sh notarize dist/Baobar.app "$VERSION" dist
+          ./tools/macapp.sh verify dist/Baobar.app
+
+      - name: Attach Baobar.app to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/Baobar-*-macOS.zip --clobber
 
   # Chocolatey gets its own job because `choco` exists only on Windows, and the
   # release job above must be macOS (native cgo for systray, plus codesign).
