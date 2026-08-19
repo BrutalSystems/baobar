@@ -68,6 +68,35 @@ brew upgrade --cask baobar
 
 Your server address, your login and your "Start at login" setting all carry over.
 
+### One extra step, once, if you upgraded to v0.1.7 with "Start at login" on
+
+**Skip this if you never ticked "Start at login", or if you installed v0.1.7 or
+later fresh.** Nothing is broken either way — this only affects how macOS
+identifies the running app.
+
+Before v0.1.7 Baobar was a plain command, and your login entry recorded the path
+to it. The upgrade keeps that path working, but macOS will not connect the
+running app to its new bundle when it is started that way: Baobar runs fine while
+showing up as `baobar` with no version, rather than as **Baobar**.
+
+To point your login entry at the app itself and restart it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/BrutalSystems/baobar/main/tools/upgrade-macos-autostart.sh -o upgrade-baobar.sh
+less upgrade-baobar.sh     # have a look before running it
+sh upgrade-baobar.sh
+```
+
+It backs up your existing entry first, does nothing if it is already correct, and
+tells you what it changed.
+
+Prefer to do it by hand? Untick **Start at login** in the menu and tick it again.
+Baobar rewrites the entry using wherever it is currently running from, which
+achieves the same thing.
+
+Tracked as [issue #22](https://github.com/BrutalSystems/baobar/issues/22) — once
+that is fixed the step disappears.
+
 ## Uninstalling
 
 ```sh
