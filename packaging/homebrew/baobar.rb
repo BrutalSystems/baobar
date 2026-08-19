@@ -16,16 +16,32 @@ cask "baobar" do
   # nothing in the UI reveals it.
   binary "#{appdir}/Baobar.app/Contents/MacOS/baobar", target: "baobar"
 
+  # launchctl is deliberately NOT here, only in zap below.
+  #
+  # `brew upgrade` runs the outgoing version's uninstall stanza before
+  # installing the new one, and Homebrew's launchctl directive deletes the
+  # LaunchAgent plist. Listing it here therefore wipes the user's "Start at
+  # login" setting on every single upgrade, silently — Baobar simply stops
+  # starting at login and nothing says why. Upgrades are routine; uninstalls
+  # are not, so the frequent case wins.
+  #
+  # The cost is that a plain `brew uninstall` leaves the login entry behind,
+  # pointing at an app that is gone. launchd then fails that job at each login,
+  # silently and harmlessly. `brew uninstall --zap` removes it properly, and the
+  # install guide says so.
   uninstall quit:       "com.brutalsystems.baobar",
-            launchctl:  "com.brutalsystems.baobar",
             login_item: "Baobar"
 
+  # zap is the complete removal, and the only place launchctl belongs: unload
+  # the login job first, then delete the entry it was reading.
+  #
   # ~/.vault-token is deliberately absent: Baobar reads and writes it, but it
   # belongs to the `bao` CLI and SOPS. Zapping Baobar must not log you out of
   # your terminal.
-  zap trash: [
-    "~/Library/LaunchAgents/com.brutalsystems.baobar.plist",
-    "~/Library/Application Support/baobar",
-    "~/Library/Caches/baobar",
-  ]
+  zap launchctl: "com.brutalsystems.baobar",
+      trash:     [
+        "~/Library/LaunchAgents/com.brutalsystems.baobar.plist",
+        "~/Library/Application Support/baobar",
+        "~/Library/Caches/baobar",
+      ]
 end

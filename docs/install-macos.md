@@ -100,18 +100,18 @@ that is fixed the step disappears.
 ## Uninstalling
 
 ```sh
-brew uninstall --cask baobar
-```
-
-That removes the app and its login entry. Your saved address and your OpenBao
-token stay on disk, because the token is shared with the `bao` command line tool
-and removing it would sign you out there too.
-
-To remove Baobar's own settings as well:
-
-```sh
 brew uninstall --zap --cask baobar
 ```
+
+`--zap` is the one to use. It removes the app, its "Start at login" entry and
+Baobar's own settings.
+
+Without `--zap` the app is removed but the login entry is left behind, pointing
+at something that is no longer there. Nothing visibly breaks — macOS just fails
+that entry quietly at each login — but it is untidy.
+
+Your OpenBao token is never removed either way. It is shared with the `bao`
+command line tool, and deleting it would sign you out there too.
 
 ## If something looks wrong
 
