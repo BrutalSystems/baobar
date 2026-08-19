@@ -1,6 +1,6 @@
 cask "baobar" do
-  version "0.1.7"
-  sha256 "08dd415a5bb67520f4e265f7962d38eafccfa15334fae9468b7d0ba4b87e508b"
+  version "0.1.8"
+  sha256 "ed210c2867d40ace54d5ef09a2b80a0f2adee621e820733caa66b6cc08764b2e"
 
   url "https://github.com/BrutalSystems/baobar/releases/download/v#{version}/Baobar-#{version}-macOS.zip"
   name "Baobar"
