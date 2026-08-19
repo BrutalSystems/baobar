@@ -374,3 +374,65 @@ func TestRefusesTranslocatedPath(t *testing.T) {
 		t.Errorf("a bundle path should be told to move to /Applications, got: %v", err)
 	}
 }
+
+// symlinkOrSkip creates a symlink, skipping the test where the platform will
+// not allow it (unprivileged Windows).
+func symlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("cannot create symlinks on this platform: %v", err)
+	}
+}
+
+func TestResolveIntoBundleFollowsASymlinkIntoAnAppBundle(t *testing.T) {
+	dir := t.TempDir()
+	inner := filepath.Join(dir, "Baobar.app", "Contents", "MacOS")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(inner, "baobar")
+	if err := os.WriteFile(real, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "baobar")
+	symlinkOrSkip(t, real, link)
+
+	// The temp directory is itself reached through a symlink on macOS
+	// (/var -> /private/var), so the expectation has to be resolved too.
+	want, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveIntoBundle(link); got != want {
+		t.Errorf("resolveIntoBundle(%q) = %q, want the bundle path %q", link, got, want)
+	}
+}
+
+// TestResolveIntoBundleKeepsVersionedIndirection is the reason this resolves
+// conditionally rather than always. Before v0.1.7 the Homebrew symlink pointed
+// at /opt/homebrew/Caskroom/baobar/<version>/baobar — a path that changes with
+// every release. Recording the target there would write a login entry that
+// breaks at the next upgrade, while the symlink would have kept working.
+func TestResolveIntoBundleKeepsVersionedIndirection(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "Caskroom", "baobar", "0.1.5", "baobar")
+	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(real, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "baobar")
+	symlinkOrSkip(t, real, link)
+
+	if got := resolveIntoBundle(link); got != link {
+		t.Errorf("resolveIntoBundle(%q) = %q, want the symlink left alone", link, got)
+	}
+}
+
+func TestResolveIntoBundleLeavesAnUnresolvablePathAlone(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nowhere", "baobar")
+	if got := resolveIntoBundle(missing); got != missing {
+		t.Errorf("resolveIntoBundle(%q) = %q, want it unchanged", missing, got)
+	}
+}

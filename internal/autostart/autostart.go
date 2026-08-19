@@ -66,6 +66,7 @@ func (a *fileAutostart) Enable() error {
 	if err != nil {
 		return err
 	}
+	exe = resolveIntoBundle(exe)
 	if err := checkStablePath(exe); err != nil {
 		return err
 	}
@@ -73,6 +74,36 @@ func (a *fileAutostart) Enable() error {
 		return err
 	}
 	return os.WriteFile(a.path, a.render(exe), 0o644)
+}
+
+// resolveIntoBundle follows symlinks, but only when doing so lands inside a
+// macOS .app bundle.
+//
+// os.Executable reports the path used to launch the process, symlink and all.
+// Homebrew installs Baobar as /opt/homebrew/bin/baobar -> the executable inside
+// /Applications/Baobar.app, and macOS will not associate a process with its
+// bundle when the executable is reached through a symlink from outside it: the
+// app runs, but reports no bundle identifier, no version, and the name "baobar"
+// rather than "Baobar". Recording the resolved path fixes that.
+//
+// The condition is the important half. Resolving unconditionally would be wrong
+// wherever the symlink is the stable interface and its target is not: before
+// v0.1.7 that same Homebrew symlink pointed into a versioned Caskroom directory,
+// and recording its target would have written a login entry that broke at the
+// next upgrade. Only a bundle path is known to be version-independent, so only a
+// bundle path is followed.
+func resolveIntoBundle(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path
+	}
+	// Compared lowercased because macOS filesystems are case-insensitive by
+	// default, and ToSlash-ed so the check reads the same on every platform.
+	norm := strings.ToLower(filepath.ToSlash(resolved))
+	if !strings.Contains(norm, ".app/contents/macos/") {
+		return path
+	}
+	return resolved
 }
 
 // volatilePrefixes are locations the OS empties out from under a running
