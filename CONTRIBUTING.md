@@ -188,9 +188,11 @@ go build -o dist/baobar-local ./cmd/baobar
 ./tools/macapp.sh verify   dist/Baobar.app
 ```
 
-`sign` needs the Developer ID in your keychain; `notarize` additionally needs
-`APPLE_NOTARY_KEY_FILE`, `APPLE_NOTARY_KEY_ID` and `APPLE_NOTARY_ISSUER_ID`. The key is
-`D99P3DSQVU` and lives in the Apple secrets vault, not on disk.
+`sign` needs a Developer ID Application certificate in your keychain. `notarize`
+additionally needs `APPLE_NOTARY_KEY_FILE` (a path to the App Store Connect `.p8`),
+`APPLE_NOTARY_KEY_ID` and `APPLE_NOTARY_ISSUER_ID`. Those come from wherever the project's
+Apple credentials are kept; the same three values exist as repository secrets so CI can do
+this unattended.
 
 `verify` is the one that matters: before notarization `spctl` reports
 `rejected / Unnotarized Developer ID`, and after stapling it must report

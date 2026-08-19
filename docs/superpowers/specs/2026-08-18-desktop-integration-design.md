@@ -210,8 +210,8 @@ The expensive one, and the one that replaces something that currently works.
      the bundle, not to a zip, so the order matters.
    - The existing `notarize:` block is removed, not kept alongside.
 
-   The Apple credential for this already exists: `APPLE_ASC_KEY_D99P3DSQVU`,
-   documented as the baobar macOS notarization key.
+   The Apple credential for this already exists in the project's credential store
+   and as a repository secret; no new account setup is needed.
 
 3. **Cask ships both stanzas.** An `app` stanza for `Baobar.app` and a `binary`
    stanza symlinking the inner executable, so `/opt/homebrew/bin/baobar` keeps
