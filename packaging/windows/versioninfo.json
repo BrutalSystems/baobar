@@ -1,0 +1,22 @@
+{
+	"FixedFileInfo": {
+		"FileVersion": {"Major": 0, "Minor": 0, "Patch": 0, "Build": 0},
+		"ProductVersion": {"Major": 0, "Minor": 0, "Patch": 0, "Build": 0},
+		"FileFlagsMask": "3f",
+		"FileFlags": "00",
+		"FileOS": "040004",
+		"FileType": "01",
+		"FileSubType": "00"
+	},
+	"StringFileInfo": {
+		"CompanyName": "BrutalSystems",
+		"FileDescription": "Menu bar / system tray indicator for OpenBao login state and token expiry",
+		"InternalName": "baobar.exe",
+		"LegalCopyright": "2026 BrutalSystems",
+		"OriginalFilename": "baobar.exe",
+		"ProductName": "Baobar"
+	},
+	"VarFileInfo": {
+		"Translation": {"LangID": "0409", "CharsetID": "04B0"}
+	}
+}

@@ -127,6 +127,81 @@ along with your mutation.
 Follow the surrounding code. `gofmt` is enforced in CI. Comments explain *why*, not what —
 particularly for anything that looks arbitrary, because in this codebase it usually is not.
 
+## Icons and packaging
+
+### There are two icon families, and they are not the same asset
+
+Confusing them is the easiest mistake to make here.
+
+**Tray state icons** — `internal/tray/assets/*.png|.ico`, 22px, five of them, one per state.
+Each has a distinct *shape* as well as a distinct colour, because on Windows the icon is the
+entire state signal and roughly 8% of men cannot separate red from green. A test decodes
+them and compares silhouettes, so a change that reduces two states to a difference in hue
+fails the build. Regenerate with:
+
+```bash
+go run ./tools/genicons
+```
+
+**The application icon** — `assets/icon/`, one bao bun on a cream tile. This is what Finder,
+Explorer, the Dock, Launchpad and the Linux applications grid show. It carries no state.
+Never derive one family from the other: at 22px the app icon's ground and pleat detail turn
+to mush, and the state shapes are the whole point.
+
+### Changing the application icon
+
+The design source is `assets/icon/baobar.svg`. Rendering it is a separate, manual step from
+deriving the packaged formats, because rasterising an SVG needs a real renderer:
+
+```bash
+python3 tools/mkmaster.py     # SVG  -> baobar-1024.png, baobar-32.png, baobar-16.png
+go run ./tools/genappicon     # PNGs -> baobar.icns, baobar.ico, hicolor/*
+```
+
+`mkmaster.py` needs Google Chrome and Pillow — neither is a project dependency, which is
+exactly why its output is committed rather than built. Chrome does the rasterising because
+the SVG carries its fills in a CSS `<style>` block, which the pure-Go rasterisers ignore;
+they would render an unfilled shape and it would look like a problem with the artwork.
+
+Three masters, not one: the mark is inset from the tile edge, and the 80% span that reads
+well at 1024 wastes pixels at 16, where the bun ends up small inside its own tile. So 16 and
+32 are composed separately with the mark spanning more of the tile, and `genappicon` prefers
+a committed `baobar-<n>.png` over a downscale. An override whose dimensions do not match its
+filename is ignored rather than trusted.
+
+**Commit the generated output.** Nothing in the Go build references `assets/`, so a stale or
+truncated icon would otherwise be discovered by `goversioninfo`, in CI, during a release. A
+guard test in `tools/genappicon` decodes the committed `.ico` to move that failure earlier.
+
+### The macOS bundle
+
+`tools/macapp.sh` owns the whole chain and is deliberately outside `.goreleaser.yaml`: every
+GoReleaser feature that would help — `app_bundles`, `dmg`, the cask `app:` stanza, native
+notarization — is Pro-only, and hooks that run only inside a release cannot be tested. The
+same commands run on a laptop and in CI.
+
+```bash
+go build -o dist/baobar-local ./cmd/baobar
+./tools/macapp.sh bundle dist/baobar-local 0.1.6 dist
+./tools/macapp.sh sign     dist/Baobar.app
+./tools/macapp.sh notarize dist/Baobar.app 0.1.6 dist   # needs the Apple key
+./tools/macapp.sh verify   dist/Baobar.app
+```
+
+`sign` needs the Developer ID in your keychain; `notarize` additionally needs
+`APPLE_NOTARY_KEY_FILE`, `APPLE_NOTARY_KEY_ID` and `APPLE_NOTARY_ISSUER_ID`. The key is
+`D99P3DSQVU` and lives in the Apple secrets vault, not on disk.
+
+`verify` is the one that matters: before notarization `spctl` reports
+`rejected / Unnotarized Developer ID`, and after stapling it must report
+`accepted / Notarized Developer ID`. Check that flip rather than trusting the exit codes —
+getting the staple ordering wrong produces an archive that passes notarization and still
+warns users who are offline.
+
+See `docs/NEXT.md` under "Releasing" for the per-release cask step, and
+`docs/superpowers/plans/2026-08-18-macos-app-bundle.md` for why each piece is shaped the way
+it is.
+
 ## Commits and PRs
 
 Explain the reasoning, not just the change. If you are fixing something subtle, say what

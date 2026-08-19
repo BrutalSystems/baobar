@@ -344,3 +344,33 @@ func TestNewReturnsSomethingUsable(t *testing.T) {
 		t.Errorf("Enabled: %v", err)
 	}
 }
+
+func TestRenderDesktopIncludesIconKey(t *testing.T) {
+	entry := string(renderDesktop("/usr/bin/baobar"))
+	if !strings.Contains(entry, "\nIcon=baobar\n") {
+		t.Errorf("autostart entry has no Icon= key:\n%s", entry)
+	}
+}
+
+// TestRefusesTranslocatedPath pins a macOS behaviour the volatile-path guard
+// was not written for but does cover. Gatekeeper runs a quarantined app from a
+// randomised read-only copy under AppTranslocation rather than from where the
+// user put it — so os.Executable reports a path that vanishes. Enabling "Start
+// at login" there would write a LaunchAgent pointing into a directory that will
+// not exist at the next login: the exact failure the guard exists to prevent.
+//
+// The path below is a real one, observed launching a notarized Baobar.app from
+// /tmp with the quarantine attribute set.
+func TestRefusesTranslocatedPath(t *testing.T) {
+	p := "/private/var/folders/n_/7mzxv0p52w5c61bgnxntljwh0000gn/T/AppTranslocation/96266093-239C-4DAD-A24E-C6D19CB0AE2A/d/Baobar.app/Contents/MacOS/baobar"
+	err := checkStablePath(p)
+	if err == nil {
+		t.Fatal("checkStablePath accepted a translocated path")
+	}
+	if !errors.Is(err, ErrVolatilePath) {
+		t.Fatalf("wrong error for a translocated path: %v", err)
+	}
+	if !strings.Contains(err.Error(), "/Applications") {
+		t.Errorf("a bundle path should be told to move to /Applications, got: %v", err)
+	}
+}

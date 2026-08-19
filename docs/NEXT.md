@@ -33,18 +33,30 @@ live token countdown, with logout and both login methods driven from the menu.
 - macOS, Windows, and Linux binaries all cross-compile; `GOOS=linux` and `GOOS=windows`
   vet are clean.
 
-**Never run:** the Windows binary, the Linux binary, and the "Start at login" toggle on any
-platform. See the top of the recommendations below.
+**Also verified since:** the Windows `amd64` binary on Windows Server 2022 (tray icon, SSO
+login in a real browser, the token picked up by the `bao` CLI, autostart across a real
+sign-out) and the Linux `amd64` binary on Ubuntu 24.04 under XFCE and GNOME.
+
+**Packaging, added 2026-08-18** — an app icon on all three platforms, Windows exe icon and
+VERSIONINFO, a Chocolatey Start Menu shortcut, Linux `.deb`/`.rpm` with a desktop entry and
+icon theme files, and a signed, notarized `Baobar.app` for macOS. The macOS chain was run
+end to end on a Mac: `notarytool` returned Accepted and `spctl` reports
+`accepted, source=Notarized Developer ID`, including against a quarantined copy.
+
+**Never run:** `windows_arm64`, `linux_arm64`, and the macOS "Start at login" checkbox via
+the tray UI. The Windows icon and Start Menu shortcut are verified to be *present* but have
+not been seen rendered on Windows.
 
 ---
 
 ## Recommended next steps, in priority order
 
-### 1. Run the Windows binary — highest expected yield
+### 1. Finish the Windows pass — highest expected yield
 
 Windows is the platform the product exists for (the thesis is that Windows has no
-SwiftBar-style menu-bar-script host), and it is the platform least exercised. Two things
-there are untested at runtime and were both wrong at some point in development:
+SwiftBar-style menu-bar-script host), and it is still the least exercised. A base pass has
+been done on Windows Server 2022; what follows is what that pass did not cover, plus two
+things that were each wrong at some point in development:
 
 An earlier version of this line also claimed Windows has no `bao` CLI. That was wrong.
 OpenBao publishes `windows_amd64` and `windows_arm64` binaries, and there is a Chocolatey
@@ -57,6 +69,14 @@ still true — but the claim was false and this file is meant to be the honest s
   its command line. The fix is unit-tested but has never opened a real browser.
 - **Autostart.** The registry implementation (`HKCU\…\Run`) has never executed. It cannot
   be tested from macOS; the tests cover the file-based platforms only.
+- **Start Menu shortcut.** After `choco install baobar`, confirm a "Baobar" entry exists in
+  the Start Menu and launches the tray app; after `choco uninstall baobar`, confirm it is
+  gone. The install script is syntax-checked on macOS with `pwsh`, but Chocolatey's cmdlets
+  do not exist there, so the behaviour is untested until this runs on Windows.
+- **Exe icon and publisher.** Confirm the exe shows the bun icon rather than the generic Go
+  binary icon in Explorer and the taskbar, and that Properties → Details names BrutalSystems
+  as the publisher. The resource is verified to be *in* the binary from macOS; that it is
+  *drawn* can only be checked here.
 
 Also confirm the tray icon and tooltip render at all: `SetTitle` is a no-op on Windows, so
 the icon plus tooltip is the entire signal there. If the icon does not appear, that is a
@@ -66,12 +86,14 @@ real bug, not a cosmetic one.
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o dist/baobar.exe ./cmd/baobar
 ```
 
-### 2. Run the Linux binary
+### 2. Install the Linux package
 
-Cross-builds cleanly (`fyne.io/systray` v1.12.2 talks to the tray over D-Bus in pure Go, so
-no cgo or GTK headers are needed — an earlier claim to the contrary was wrong and is
-corrected in the design doc). What is unverified is whether the tray item actually appears:
-the D-Bus path needs a session bus and a StatusNotifierItem-capable desktop.
+The binary itself has been run on Ubuntu 24.04 under XFCE and GNOME, so the D-Bus
+StatusNotifierItem path is confirmed. What is unverified is the packaging added since:
+`dpkg -i` the `.deb`, then confirm Baobar appears in the applications grid with its icon,
+and that the autostart entry shows an icon in the startup-apps UI. The `.deb` payload has
+been inspected and contains the binary, the desktop entry and all seven icon sizes — but
+inspecting an archive is not the same as installing it.
 
 ### 3. Finish the M1 manual checks
 
@@ -88,26 +110,38 @@ history of finding something:
 - Re-login pickup: log in from a terminal while Baobar runs; it should notice within a
   second, not wait out the recheck window.
 
-### 4. Real icon artwork
+### 4. A tray template image
 
-Accessibility is already handled — five states with distinct **shapes** (filled circle,
-diamond, ring, hollow square, triangle), enforced by a test that compares silhouettes so a
-change cannot regress to hue-only. What remains is craft: a bao-bun rendered as a macOS
-template image so it adapts to light/dark, keeping the per-state shape distinction.
+**The application icon is done** — a bao bun on a cream tile, in `assets/icon/`, shipped on
+all three platforms. This item is now only about the *tray* glyphs, which are a different
+asset with a different job.
 
-Regenerate with `go run ./tools/genicons`.
+Accessibility there is already handled: five states with distinct **shapes** (filled circle,
+diamond, ring, hollow square, triangle), enforced by a test comparing silhouettes so a
+change cannot regress to hue-only. What remains is craft — rendering the bun as a macOS
+template image so it adapts to light and dark menu bars, while keeping the per-state shape
+distinction that the test enforces.
 
-### 5. Publishing, if you want it
+Do not derive these from the app icon: at 22px the app icon's ground and pleat detail turn
+to mush, and the state shapes are the point. Regenerate with `go run ./tools/genicons`.
 
-- LICENSE is MIT, copyright "Mike Williams" taken from git authorship — **change it if the
-  intended holder is an entity.**
-- No GitHub remote exists yet. The module path is `github.com/BrutalSystems/baobar`; if the
-  org differs, `go mod edit -module` before the first push.
-- goreleaser → GitHub Releases, then a Homebrew cask. **macOS signing and notarization is
-  the first real chore** — an unsigned tray app is a bad first impression and it needs an
-  Apple Developer account plus notarization in CI.
-- Before publishing: never screenshot the menu for a README without redacting. It shows
-  your server hostname and your email-derived display name.
+### 5. Publishing — mostly done, with three loose ends
+
+Releases publish to GitHub, macOS is signed and notarized, the Homebrew tap and winget
+manifests are wired, and the Chocolatey package is submitted. What is left:
+
+- **Windows and Linux binaries are unsigned** ([#11](https://github.com/BrutalSystems/baobar/issues/11)).
+  SmartScreen may warn on first run.
+- **The `nfpms` maintainer address** is `BrutalSystems <noreply@brutalsystems.com>`, which
+  may not be a real mailbox. Every `.deb` and `.rpm` carries it publicly and permanently —
+  decide before the next release.
+- **Notification attribution.** `beeep` shells out to `osascript` on macOS, so expiry
+  notifications are attributed to Script Editor rather than to Baobar. The `.app` bundle
+  now supplies the bundle identifier that fixing this requires, but the fix itself needs a
+  different notification path.
+
+Standing rule: never screenshot the menu for a README without redacting. It shows your
+server hostname and your email-derived display name.
 
 ---
 
@@ -183,11 +217,48 @@ internal/authflow/   loopback session, OIDC flow, two-phase MFA, served form
 internal/autostart/  Enabled/Enable/Disable + per-platform artifacts
 internal/tray/       formatting, icons, systray wiring
 internal/notify/     expiry thresholds, desktop notifications
-tools/genicons/      regenerates the five state icons
-docs/superpowers/    specs and plans for M1 and M2
+
+assets/icon/         the app icon: SVG source, PNG masters, generated .icns/.ico/hicolor
+packaging/chocolatey/  Windows package: nuspec + install/uninstall scripts
+packaging/homebrew/  the macOS cask, hand-maintained (see Releasing below)
+packaging/linux/     the applications-menu .desktop entry
+packaging/windows/   versioninfo.json, the exe's VERSIONINFO block
+
+tools/genicons/      regenerates the five 22px tray STATE icons
+tools/genappicon/    derives .icns/.ico/hicolor from the app icon master
+tools/mkmaster.py    renders the app icon PNG masters from the SVG (needs Chrome)
+tools/macapp.sh      builds, signs, notarizes and staples Baobar.app
+docs/superpowers/    specs and plans, including the 2026-08-18 desktop integration work
 docs/local/          git-ignored: real server address, the internal prototype's path
 .superpowers/sdd/    git-ignored: per-task ledgers, reports, and review packages
 ```
 
 `docs/local/verification.md` holds the environment-specific values the public docs
 deliberately omit. Start there if a command in the docs needs a real hostname.
+
+## Releasing
+
+### macOS: the Homebrew cask is hand-maintained
+
+GoReleaser no longer generates the cask. An app-based cask needs the `app:` stanza, which
+is GoReleaser Pro only and additionally forces DMG output, which is also Pro. The cask
+therefore lives at `packaging/homebrew/baobar.rb` and is copied to the tap by hand.
+
+After a release publishes:
+
+1. Take the SHA-256 that `tools/macapp.sh notarize` printed — it is in the release job log,
+   on the line after "notarized and stapled".
+2. Update `version` and `sha256` in `packaging/homebrew/baobar.rb`.
+3. Copy it to `BrutalSystems/homebrew-tap` as `Casks/baobar.rb` and push.
+
+Two fields per release. This is the automation a Pro licence would have bought, and it is
+worth revisiting that trade if Windows `.msi` installers ever land on the roadmap, since
+those are Pro-only too.
+
+### Testing the cask locally
+
+Homebrew refuses casks that are not in a tap, so a bare file path will not install. Use a
+scratch tap, and test with an *isolated* copy rather than the real cask — installing a
+second cask named `baobar` collides with the installed one, and the real uninstall runs
+`launchctl: com.brutalsystems.baobar`, which would tear down your own working LaunchAgent.
+The procedure is in `docs/superpowers/plans/2026-08-18-macos-app-bundle.md`, Task 4.

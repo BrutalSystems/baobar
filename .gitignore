@@ -4,3 +4,7 @@ docs/local/
 /baobar
 /baobar.exe
 dist/
+
+# Windows resource objects: generated per release by the goreleaser before
+# hook, because the version string is baked into them.
+cmd/baobar/*.syso

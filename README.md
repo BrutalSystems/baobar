@@ -149,12 +149,17 @@ brew trust brutalsystems/tap    # Homebrew refuses casks from untrusted third-pa
 brew install --cask baobar
 ```
 
-macOS binaries are signed with a Developer ID and notarized by Apple as of v0.1.2, so this
+Baobar installs as an application: `/Applications/Baobar.app`, so it appears in Spotlight
+and Launchpad like anything else. The `baobar` command stays on your `PATH` as well, which
+is what keeps an existing "Start at login" entry working across the upgrade.
+
+macOS builds are signed with a Developer ID and notarized by Apple as of v0.1.2, so this
 just works — no Gatekeeper dialog and no `xattr` incantation. Verify it yourself if you
 like:
 
 ```bash
-codesign --test-requirement="=notarized" -vv "$(brew --prefix)/bin/baobar"
+codesign --test-requirement="=notarized" -vv /Applications/Baobar.app
+spctl -a -vv -t exec /Applications/Baobar.app   # accepted, source=Notarized Developer ID
 ```
 
 If you are on v0.1.1 or earlier, upgrade — those binaries were unsigned, and Gatekeeper
@@ -165,7 +170,7 @@ offered to move them to the Trash.
 Verifying a macOS build shows a name that is not BrutalSystems:
 
 ```
-$ codesign -dv --verbose=2 "$(brew --prefix)/bin/baobar"
+$ codesign -dv --verbose=2 /Applications/Baobar.app
 Authority=Developer ID Application: Springthrough Consulting Inc. (7CQD3Q2Y8Z)
 TeamIdentifier=7CQD3Q2Y8Z
 ```
@@ -199,10 +204,20 @@ Windows-on-ARM hardware.
 
 ### Linux
 
-Download `baobar_<version>_linux_amd64.tar.gz` from
-[the latest release](https://github.com/BrutalSystems/baobar/releases/latest), extract it,
-and put the binary somewhere permanent — **not** `/tmp`, which "Start at login" refuses by
-design because the OS empties it.
+On Debian and Ubuntu, prefer the package. It is the only install that places the desktop
+entry and the icon, so Baobar appears in the applications grid rather than being launchable
+only by path:
+
+```sh
+sudo dpkg -i baobar_<version>_linux_amd64.deb
+```
+
+An `.rpm` is published for Fedora and openSUSE.
+
+The tarball still works and is the right choice on other distributions. Extract it and put
+the binary somewhere permanent — **not** `/tmp`, which "Start at login" refuses by design
+because the OS empties it. Note that an extracted binary has no applications-menu entry and
+no icon: nothing in an archive can install into `/usr/share`.
 
 ```sh
 tar xzf baobar_*_linux_amd64.tar.gz

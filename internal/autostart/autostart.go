@@ -101,7 +101,17 @@ func checkStablePath(exe string) error {
 	}
 	for _, p := range prefixes {
 		if strings.Contains(norm, p) {
-			return fmt.Errorf("%w: %s is a temporary location that will be empty at your next login; install Baobar somewhere permanent (for example /usr/local/bin) and enable this again", ErrVolatilePath, exe)
+			// A macOS bundle gets different advice. Gatekeeper runs a
+			// quarantined app from a randomised AppTranslocation copy, so the
+			// user sees this while running the app from Downloads — and
+			// "/usr/local/bin" is meaningless for something they double-clicked.
+			// Moving it to /Applications both fixes the path and stops the
+			// translocation.
+			where := "install Baobar somewhere permanent (for example /usr/local/bin)"
+			if strings.Contains(norm, ".app/contents/macos/") {
+				where = "move Baobar.app to /Applications"
+			}
+			return fmt.Errorf("%w: %s is a temporary location that will be empty at your next login; %s and enable this again", ErrVolatilePath, exe, where)
 		}
 	}
 	return nil
