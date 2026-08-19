@@ -141,6 +141,11 @@ exchange rather than returning a token.
 
 ## Install
 
+**Step-by-step guides for people who just want it working:**
+[macOS](docs/install-macos.md) · [Windows](docs/install-windows.md)
+
+The rest of this section is the short version, plus the detail behind it.
+
 ### Homebrew
 
 ```bash
