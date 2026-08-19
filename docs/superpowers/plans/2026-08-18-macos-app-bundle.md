@@ -25,9 +25,9 @@ any kind.
   the local keychain, so Tasks 1 and 2 need no credential setup at all.
 - `codesign`, `iconutil`, `hdiutil`, `ditto`, `notarytool` and `stapler` are all
   present on this machine.
-- `AuthKey_D99P3DSQVU.p8` is **not** in `~/.appstoreconnect/private_keys/` — only
-  32QG7MADJ4 and 8NK72ZZWS7 are. Task 3 therefore needs the `keep` vault, as its
-  Step 2 says.
+- The notarization `.p8` is **not** in `~/.appstoreconnect/private_keys/` — the keys
+  there belong to other projects. Task 3 therefore has to fetch it from the
+  project's credential store, as its Step 2 says.
 - The universal binary really is at `dist/darwin_darwin_all/baobar`, and
   `find dist -type f -name baobar -path '*darwin_all*'` matches it. Confirmed
   against a real snapshot build; `file` reports a 2-architecture Mach-O.
@@ -306,9 +306,9 @@ git commit -m "feat(macos): sign the bundle with the hardened runtime"
 
 ### Task 3: Notarize and staple
 
-The one task needing a credential. `AuthKey_D99P3DSQVU.p8` is not on disk — it
-lives in the Apple `keep` vault, which decrypts through OpenBao and therefore
-needs a live token.
+The one task needing a credential. The App Store Connect `.p8` is not on disk —
+it lives in the project's encrypted credential store, which decrypts through
+OpenBao and therefore needs a live token.
 
 **Files:**
 - Modify: `tools/macapp.sh` (add `notarize`)
@@ -364,20 +364,19 @@ cmd_notarize() {
 
 - [x] **Step 2: Unlock the credential**
 
-This needs a live OpenBao token, so run it yourself rather than through the
-agent — in Claude Code, prefix with `!` to run it in the session:
+Fetch the App Store Connect key from the project's credential store, decode it to
+a temporary file, and point the three environment variables at it:
 
 ```bash
-bao login -method=oidc role=developer
-keep unlock -f "$KEEP_APPLE_FILE" APPLE_ASC_KEY_D99P3DSQVU_P8_B64 APPLE_ASC_ISSUER_ID
-printf %s "$APPLE_ASC_KEY_D99P3DSQVU_P8_B64" | base64 -d > "$TMPDIR/AuthKey_D99P3DSQVU.p8"
-export APPLE_NOTARY_KEY_FILE="$TMPDIR/AuthKey_D99P3DSQVU.p8"
-export APPLE_NOTARY_KEY_ID=D99P3DSQVU
-export APPLE_NOTARY_ISSUER_ID="$APPLE_ASC_ISSUER_ID"
+# ... retrieve the base64-encoded .p8 from your credential store, then:
+printf %s "$ASC_KEY_P8_B64" | base64 -d > "$TMPDIR/AuthKey.p8"
+export APPLE_NOTARY_KEY_FILE="$TMPDIR/AuthKey.p8"
+export APPLE_NOTARY_KEY_ID=<the App Store Connect key ID>
+export APPLE_NOTARY_ISSUER_ID=<the issuer UUID>
 ```
 
-The `.p8` is stored base64-encoded because keep's dotenv format cannot hold a
-multi-line PEM. Delete the decoded file when finished.
+The `.p8` is stored base64-encoded because a dotenv-style store cannot hold a
+multi-line PEM. Delete the decoded file when finished — it is a signing key.
 
 - [x] **Step 3: Notarize**
 
@@ -604,9 +603,9 @@ In `.github/workflows/release.yml`, after the GoReleaser step:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-The secret `APPLE_NOTARY_KEY_B64` is the base64 of `AuthKey_D99P3DSQVU.p8`, which
-is exactly how the Apple `keep` vault already stores it — copy the value across
-without decoding.
+The notarization key secret is the base64 of the App Store Connect `.p8`, which is
+exactly how the credential store already holds it — copy the value across without
+decoding.
 
 - [x] **Step 3: Document the cask release step**
 
