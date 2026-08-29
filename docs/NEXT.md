@@ -37,6 +37,19 @@ live token countdown, with logout and both login methods driven from the menu.
 login in a real browser, the token picked up by the `bao` CLI, autostart across a real
 sign-out) and the Linux `amd64` binary on Ubuntu 24.04 under XFCE and GNOME.
 
+**Released 2026-08-19** as v0.1.7 (the packaging below) and v0.1.8, which fixed the macOS
+login entry recording Homebrew's symlink rather than the path inside the app bundle —
+macOS will not associate a process with its bundle through a symlink from outside it, so
+"Start at login" produced a Baobar with no bundle identifier and no version. Resolution is
+deliberately conditional; see `resolveIntoBundle` and the test named for the versioned-path
+case it must not break.
+
+Two things were found by releasing rather than by testing, and are worth remembering:
+the cask's `launchctl` teardown belongs in `zap` and not `uninstall`, because `brew upgrade`
+runs the outgoing version's uninstall stanza and would wipe the user's autostart every time;
+and a login entry written before v0.1.8 still points at the symlink, which
+`tools/upgrade-macos-autostart.sh` repairs.
+
 **Packaging, added 2026-08-18** — an app icon on all three platforms, Windows exe icon and
 VERSIONINFO, a Chocolatey Start Menu shortcut, Linux `.deb`/`.rpm` with a desktop entry and
 icon theme files, and a signed, notarized `Baobar.app` for macOS. The macOS chain was run
@@ -133,8 +146,9 @@ manifests are wired, and the Chocolatey package is submitted. What is left:
 - **Windows and Linux binaries are unsigned** ([#11](https://github.com/BrutalSystems/baobar/issues/11)).
   SmartScreen may warn on first run.
 - **The `nfpms` maintainer address** is `BrutalSystems <noreply@brutalsystems.com>`, which
-  may not be a real mailbox. Every `.deb` and `.rpm` carries it publicly and permanently —
-  decide before the next release.
+  may not be a real mailbox. This is no longer a decision to take *before* a release: v0.1.7
+  and v0.1.8 have both shipped with it, and the published packages carry it permanently.
+  Changing it now only affects future releases.
 - **Notification attribution.** `beeep` shells out to `osascript` on macOS, so expiry
   notifications are attributed to Script Editor rather than to Baobar. The `.app` bundle
   now supplies the bundle identifier that fixing this requires, but the fix itself needs a
